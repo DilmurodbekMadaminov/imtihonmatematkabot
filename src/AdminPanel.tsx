@@ -1,10 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { Users, Lock, LogOut, Activity } from 'lucide-react';
 
+interface UserData {
+  id: number;
+  timestamp: number;
+  firstName?: string;
+  lastName?: string;
+  username?: string;
+}
+
 export default function AdminPanel() {
   const [password, setPassword] = useState('');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [stats, setStats] = useState<{ usersCount: number, monthlyUsers: number } | null>(null);
+  const [usersList, setUsersList] = useState<UserData[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -15,6 +24,22 @@ export default function AdminPanel() {
       fetchStats(savedToken);
     }
   }, []);
+
+  const fetchUsers = async (token: string) => {
+    try {
+      const response = await fetch('/api/admin/users', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setUsersList(data);
+      }
+    } catch (err) {
+      console.error('Error fetching users list:', err);
+    }
+  };
 
   const fetchStats = async (token: string) => {
     setLoading(true);
@@ -31,6 +56,7 @@ export default function AdminPanel() {
         setStats(data);
         setIsAuthenticated(true);
         localStorage.setItem('admin_token', token);
+        fetchUsers(token);
       } else {
         setError('Noto\'g\'ri parol');
         setIsAuthenticated(false);
@@ -129,6 +155,54 @@ export default function AdminPanel() {
                 {stats?.monthlyUsers !== undefined ? stats.monthlyUsers : '...'}
               </p>
             </div>
+          </div>
+        </div>
+
+        <div className="mt-8 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="p-6 border-b border-slate-200">
+            <h2 className="text-xl font-bold text-slate-800">Foydalanuvchilar ro'yxati</h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 text-slate-500 text-sm border-b border-slate-200">
+                  <th className="p-4 font-medium">ID</th>
+                  <th className="p-4 font-medium">Ism</th>
+                  <th className="p-4 font-medium">Username</th>
+                  <th className="p-4 font-medium">Oxirgi faollik</th>
+                </tr>
+              </thead>
+              <tbody>
+                {usersList.map((user) => (
+                  <tr key={user.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                    <td className="p-4 text-sm text-slate-600 font-mono">{user.id}</td>
+                    <td className="p-4 text-sm text-slate-800 font-medium">
+                      {user.firstName || ''} {user.lastName || ''}
+                      {!user.firstName && !user.lastName && <span className="text-slate-400 italic">Noma'lum</span>}
+                    </td>
+                    <td className="p-4 text-sm text-slate-600">
+                      {user.username ? (
+                        <a href={`https://t.me/${user.username}`} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">
+                          @{user.username}
+                        </a>
+                      ) : (
+                        <span className="text-slate-400 italic">-</span>
+                      )}
+                    </td>
+                    <td className="p-4 text-sm text-slate-600">
+                      {new Date(user.timestamp).toLocaleString('uz-UZ')}
+                    </td>
+                  </tr>
+                ))}
+                {usersList.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="p-8 text-center text-slate-500">
+                      Hozircha foydalanuvchilar yo'q
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>

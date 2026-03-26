@@ -9,8 +9,17 @@ import { variants } from "./src/questions.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const USERS_FILE = path.join(__dirname, 'users.json');
-let userActivity = new Map<number, number>();
+// Ma'lumotlar o'chib ketmasligi uchun maxsus papka (Fly.io kabi serverlar uchun)
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+const USERS_FILE = path.join(DATA_DIR, 'users.json');
+interface UserData {
+  timestamp: number;
+  firstName?: string;
+  lastName?: string;
+  username?: string;
+}
+
+let userActivity = new Map<number, UserData>();
 
 try {
   if (fs.existsSync(USERS_FILE)) {
@@ -18,10 +27,14 @@ try {
     const parsed = JSON.parse(data);
     if (Array.isArray(parsed)) {
       const now = Date.now();
-      parsed.forEach(id => userActivity.set(id, now));
+      parsed.forEach(id => userActivity.set(id, { timestamp: now }));
     } else {
-      Object.entries(parsed).forEach(([id, timestamp]) => {
-        userActivity.set(Number(id), Number(timestamp));
+      Object.entries(parsed).forEach(([id, val]) => {
+        if (typeof val === 'number') {
+          userActivity.set(Number(id), { timestamp: val });
+        } else {
+          userActivity.set(Number(id), val as UserData);
+        }
       });
     }
   }
@@ -29,8 +42,13 @@ try {
   console.error('Error loading users:', e);
 }
 
-function trackUser(userId: number) {
-  userActivity.set(userId, Date.now());
+function trackUser(user: { id: number; first_name?: string; last_name?: string; username?: string }) {
+  userActivity.set(user.id, {
+    timestamp: Date.now(),
+    firstName: user.first_name,
+    lastName: user.last_name,
+    username: user.username
+  });
   try {
     const obj = Object.fromEntries(userActivity);
     fs.writeFileSync(USERS_FILE, JSON.stringify(obj));
@@ -42,8 +60,8 @@ function trackUser(userId: number) {
 function getMonthlyUsersCount() {
   const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
   let count = 0;
-  for (const timestamp of userActivity.values()) {
-    if (timestamp >= thirtyDaysAgo) count++;
+  for (const data of userActivity.values()) {
+    if (data.timestamp >= thirtyDaysAgo) count++;
   }
   return count;
 }
@@ -76,6 +94,22 @@ async function startServer() {
     });
   });
 
+  app.get('/api/admin/users', (req, res) => {
+    const authHeader = req.headers.authorization;
+    const adminPassword = process.env.ADMIN_PASSWORD || 'admin';
+    
+    if (!authHeader || authHeader !== `Bearer ${adminPassword}`) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    const usersList = Array.from(userActivity.entries()).map(([id, data]) => ({
+      id,
+      ...data
+    })).sort((a, b) => b.timestamp - a.timestamp);
+
+    res.json(usersList);
+  });
+
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   let botStatus = "not_configured";
   let bot: Telegraf | null = null;
@@ -85,8 +119,8 @@ async function startServer() {
       bot = new Telegraf(botToken);
       
       bot.use((ctx, next) => {
-        if (ctx.from?.id) {
-          trackUser(ctx.from.id);
+        if (ctx.from) {
+          trackUser(ctx.from);
         }
         return next();
       });
