@@ -5,13 +5,29 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 import { variants } from "./src/questions.js";
+import { initializeApp } from 'firebase/app';
+import { getFirestore, doc, setDoc, getDocs, collection, query, where, Timestamp } from 'firebase/firestore';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Ma'lumotlar o'chib ketmasligi uchun maxsus papka (Fly.io kabi serverlar uchun)
-const DATA_DIR = process.env.DATA_DIR || __dirname;
-const USERS_FILE = path.join(DATA_DIR, 'users.json');
+// Firebase configuration
+const firebaseConfigPath = path.join(__dirname, 'firebase-applet-config.json');
+let db: any = null;
+
+try {
+  if (fs.existsSync(firebaseConfigPath)) {
+    const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, 'utf-8'));
+    const app = initializeApp(firebaseConfig);
+    db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+    console.log("Firebase initialized successfully.");
+  } else {
+    console.warn("firebase-applet-config.json not found. Firebase will not be used.");
+  }
+} catch (e) {
+  console.error("Error initializing Firebase:", e);
+}
+
 interface UserData {
   timestamp: number;
   firstName?: string;
@@ -19,51 +35,77 @@ interface UserData {
   username?: string;
 }
 
+// Fallback in-memory map if Firebase fails
 let userActivity = new Map<number, UserData>();
 
-try {
-  if (fs.existsSync(USERS_FILE)) {
-    const data = fs.readFileSync(USERS_FILE, 'utf-8');
-    const parsed = JSON.parse(data);
-    if (Array.isArray(parsed)) {
-      const now = Date.now();
-      parsed.forEach(id => userActivity.set(id, { timestamp: now }));
-    } else {
-      Object.entries(parsed).forEach(([id, val]) => {
-        if (typeof val === 'number') {
-          userActivity.set(Number(id), { timestamp: val });
-        } else {
-          userActivity.set(Number(id), val as UserData);
-        }
-      });
-    }
-  }
-} catch (e) {
-  console.error('Error loading users:', e);
-}
-
-function trackUser(user: { id: number; first_name?: string; last_name?: string; username?: string }) {
-  userActivity.set(user.id, {
+async function trackUser(user: { id: number; first_name?: string; last_name?: string; username?: string }) {
+  const data: UserData = {
     timestamp: Date.now(),
     firstName: user.first_name,
     lastName: user.last_name,
     username: user.username
-  });
-  try {
-    const obj = Object.fromEntries(userActivity);
-    fs.writeFileSync(USERS_FILE, JSON.stringify(obj));
-  } catch (e) {
-    console.error('Error saving users:', e);
+  };
+  
+  userActivity.set(user.id, data);
+
+  if (db) {
+    try {
+      await setDoc(doc(db, 'users', user.id.toString()), data, { merge: true });
+    } catch (e) {
+      console.error('Error saving user to Firestore:', e);
+    }
   }
 }
 
-function getMonthlyUsersCount() {
+async function getMonthlyUsersCount() {
+  if (db) {
+    try {
+      const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+      const q = query(collection(db, 'users'), where('timestamp', '>=', thirtyDaysAgo));
+      const snapshot = await getDocs(q);
+      return snapshot.size;
+    } catch (e) {
+      console.error('Error getting monthly users from Firestore:', e);
+    }
+  }
+  
+  // Fallback
   const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
   let count = 0;
   for (const data of userActivity.values()) {
     if (data.timestamp >= thirtyDaysAgo) count++;
   }
   return count;
+}
+
+async function getTotalUsersCount() {
+  if (db) {
+    try {
+      const snapshot = await getDocs(collection(db, 'users'));
+      return snapshot.size;
+    } catch (e) {
+      console.error('Error getting total users from Firestore:', e);
+    }
+  }
+  return userActivity.size;
+}
+
+async function getAllUsers() {
+  if (db) {
+    try {
+      const snapshot = await getDocs(collection(db, 'users'));
+      return snapshot.docs.map(doc => ({
+        id: Number(doc.id),
+        ...doc.data()
+      })).sort((a: any, b: any) => b.timestamp - a.timestamp);
+    } catch (e) {
+      console.error('Error getting all users from Firestore:', e);
+    }
+  }
+  return Array.from(userActivity.entries()).map(([id, data]) => ({
+    id,
+    ...data
+  })).sort((a, b) => b.timestamp - a.timestamp);
 }
 
 interface UserSession {
@@ -80,7 +122,7 @@ async function startServer() {
 
   app.use(express.json());
 
-  app.get('/api/admin/stats', (req, res) => {
+  app.get('/api/admin/stats', async (req, res) => {
     const authHeader = req.headers.authorization;
     const adminPassword = process.env.ADMIN_PASSWORD || 'admin';
     
@@ -89,12 +131,12 @@ async function startServer() {
     }
     
     res.json({ 
-      usersCount: userActivity.size,
-      monthlyUsers: getMonthlyUsersCount()
+      usersCount: await getTotalUsersCount(),
+      monthlyUsers: await getMonthlyUsersCount()
     });
   });
 
-  app.get('/api/admin/users', (req, res) => {
+  app.get('/api/admin/users', async (req, res) => {
     const authHeader = req.headers.authorization;
     const adminPassword = process.env.ADMIN_PASSWORD || 'admin';
     
@@ -102,11 +144,7 @@ async function startServer() {
       return res.status(401).json({ error: 'Unauthorized' });
     }
     
-    const usersList = Array.from(userActivity.entries()).map(([id, data]) => ({
-      id,
-      ...data
-    })).sort((a, b) => b.timestamp - a.timestamp);
-
+    const usersList = await getAllUsers();
     res.json(usersList);
   });
 
@@ -291,10 +329,14 @@ async function startServer() {
 
       // Webhooklar AI Studio muhitida proxy sababli ishlamaydi (302 Cookie check).
       // Shuning uchun faqat Polling dan foydalanamiz.
-      await bot.telegram.deleteWebhook();
-      bot.launch();
+      await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+      bot.launch({ dropPendingUpdates: true });
       console.log("Telegram bot launched in Polling mode.");
       
+      // Enable graceful stop
+      process.once('SIGINT', () => bot?.stop('SIGINT'));
+      process.once('SIGTERM', () => bot?.stop('SIGTERM'));
+
       botStatus = "running";
     } catch (error) {
       console.error("Failed to launch Telegram bot:", error);

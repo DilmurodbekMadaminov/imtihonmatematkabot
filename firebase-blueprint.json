@@ -1,0 +1,36 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user of the Telegram bot",
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "number",
+          "description": "Last activity timestamp"
+        },
+        "firstName": {
+          "type": "string",
+          "description": "User's first name"
+        },
+        "lastName": {
+          "type": "string",
+          "description": "User's last name"
+        },
+        "username": {
+          "type": "string",
+          "description": "User's Telegram username"
+        }
+      },
+      "required": ["timestamp"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/User"
+      },
+      "description": "Collection of bot users"
+    }
+  }
+}

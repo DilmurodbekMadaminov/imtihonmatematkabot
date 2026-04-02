@@ -59,10 +59,7 @@ export const questions: Question[] = [
   { id: 50, text: "Agar x = 7,25 va y = 1,75 bo'lsa, x² - y² ning qiymatini hisoblang.", options: ["32", "30", "34", "49,5"], correct: 3 }
 ];
 
-export const variants = [
-  questions.slice(0, 10),
-  questions.slice(10, 20),
-  questions.slice(20, 30),
-  questions.slice(30, 40),
-  questions.slice(40, 50)
-];
+export const variants = [];
+for (let i = 0; i < questions.length; i += 10) {
+  variants.push(questions.slice(i, i + 10));
+}
