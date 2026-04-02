@@ -329,17 +329,36 @@ async function startServer() {
 
       // Webhooklar AI Studio muhitida proxy sababli ishlamaydi (302 Cookie check).
       // Shuning uchun faqat Polling dan foydalanamiz.
-      await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-      bot.launch({ dropPendingUpdates: true });
-      console.log("Telegram bot launched in Polling mode.");
+      const launchBot = async (retries = 5) => {
+        for (let i = 0; i < retries; i++) {
+          try {
+            await bot!.telegram.deleteWebhook({ drop_pending_updates: true });
+            await bot!.launch({ dropPendingUpdates: true });
+            console.log("Telegram bot launched in Polling mode.");
+            botStatus = "running";
+            return;
+          } catch (error: any) {
+            if (error?.response?.error_code === 409) {
+              console.warn(`Conflict error (409) - another instance is running. Retrying in 3 seconds... (${i + 1}/${retries})`);
+              await new Promise(resolve => setTimeout(resolve, 3000));
+            } else {
+              throw error;
+            }
+          }
+        }
+        throw new Error("Failed to launch bot after multiple retries due to 409 Conflict.");
+      };
+
+      launchBot().catch(error => {
+        console.error("Failed to launch Telegram bot:", error);
+        botStatus = "error";
+      });
       
       // Enable graceful stop
       process.once('SIGINT', () => bot?.stop('SIGINT'));
       process.once('SIGTERM', () => bot?.stop('SIGTERM'));
-
-      botStatus = "running";
     } catch (error) {
-      console.error("Failed to launch Telegram bot:", error);
+      console.error("Error setting up Telegram bot:", error);
       botStatus = "error";
     }
   } else {
