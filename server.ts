@@ -329,7 +329,7 @@ async function startServer() {
 
       // Webhooklar AI Studio muhitida proxy sababli ishlamaydi (302 Cookie check).
       // Shuning uchun faqat Polling dan foydalanamiz.
-      const launchBot = async (retries = 5) => {
+      const launchBot = async (retries = 3) => {
         for (let i = 0; i < retries; i++) {
           try {
             await bot!.telegram.deleteWebhook({ drop_pending_updates: true });
@@ -339,14 +339,18 @@ async function startServer() {
             return;
           } catch (error: any) {
             if (error?.response?.error_code === 409) {
-              console.warn(`Conflict error (409) - another instance is running. Retrying in 3 seconds... (${i + 1}/${retries})`);
+              console.warn(`Conflict error (409) - another instance is running. (${i + 1}/${retries})`);
+              if (i === retries - 1) {
+                console.warn("Bot is already running on another server (e.g., Render). Stopping local polling attempts to prevent conflicts.");
+                botStatus = "running_elsewhere";
+                return; // Xatoni throw qilmasdan to'xtatamiz
+              }
               await new Promise(resolve => setTimeout(resolve, 3000));
             } else {
               throw error;
             }
           }
         }
-        throw new Error("Failed to launch bot after multiple retries due to 409 Conflict.");
       };
 
       launchBot().catch(error => {
