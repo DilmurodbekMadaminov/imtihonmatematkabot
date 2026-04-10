@@ -109,7 +109,42 @@ export const questions: Question[] = [
   { id: 100, text: "Radiusi 15 ga teng bo'lgan doirani yuzini toping.", options: ["200π", "200π", "225", "225π"], correct: 3 }
 ];
 
-export const variants = [];
-for (let i = 0; i < questions.length; i += 10) {
-  variants.push(questions.slice(i, i + 10));
+export interface Variant {
+  title: string;
+  questions: Question[];
+}
+
+const variantTitles = [
+  "14-iyul 1-smena (1-qism)", "14-iyul 1-smena (2-qism)", "14-iyul 1-smena (3-qism)",
+  "14-iyul 2-smena (1-qism)", "14-iyul 2-smena (2-qism)",
+  "15-iyul 1-smena (1-qism)", "15-iyul 1-smena (2-qism)",
+  "15-iyul 2-smena (1-qism)", "15-iyul 2-smena (2-qism)",
+  "16-iyul 1-smena (1-qism)", "16-iyul 1-smena (2-qism)",
+  "16-iyul 2-smena (1-qism)", "16-iyul 2-smena (2-qism)",
+  "17-iyul 1-smena (1-qism)", "17-iyul 1-smena (2-qism)",
+  "17-iyul 2-smena (1-qism)", "17-iyul 2-smena (2-qism)",
+  "18-iyul 1-smena (1-qism)", "18-iyul 1-smena (2-qism)",
+  "18-iyul 2-smena (1-qism)", "18-iyul 2-smena (2-qism)",
+  "19-iyul 1-smena (1-qism)", "19-iyul 1-smena (2-qism)",
+  "19-iyul 2-smena (1-qism)", "19-iyul 2-smena (2-qism)",
+  "20-iyul 1-smena (1-qism)", "20-iyul 1-smena (2-qism)",
+  "20-iyul 2-smena (1-qism)", "20-iyul 2-smena (2-qism)",
+  "21-iyul 1-smena (1-qism)"
+];
+
+for (let i = 101; i <= 300; i++) {
+  questions.push({
+    id: i,
+    text: `${i}-savol: Ushbu savol tez kunda to'liq kiritiladi (2025 majburiy matematika).`,
+    options: ["A", "B", "C", "D"],
+    correct: 0
+  });
+}
+
+export const variants: Variant[] = [];
+for (let i = 0; i < 30; i++) {
+  variants.push({
+    title: variantTitles[i] || `${i + 1}-variant`,
+    questions: questions.slice(i * 10, (i + 1) * 10)
+  });
 }

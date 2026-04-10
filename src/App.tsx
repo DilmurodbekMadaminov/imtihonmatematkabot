@@ -30,7 +30,7 @@ function QuizApp() {
     setFinished(false);
   };
 
-  const currentQuestions = selectedVariant !== null ? variants[selectedVariant] : [];
+  const currentQuestions = selectedVariant !== null ? variants[selectedVariant].questions : [];
 
   const handleAnswer = (optionIndex: number) => {
     const newAnswers = [...answers, optionIndex];
@@ -69,13 +69,13 @@ function QuizApp() {
             Ushbu test Milliy Sertifikat savollari asosida tuzilgan. Test yakunida sizning natijangiz foizda hisoblanadi. Qaysi variantni ishlashni xohlaysiz?
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {variants.map((_, i) => (
+            {variants.map((v, i) => (
               <button 
                 key={i}
                 onClick={() => handleStart(i)}
                 className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-6 rounded-xl transition-colors inline-flex items-center justify-center gap-2 cursor-pointer"
               >
-                Variant {i + 1} <ChevronRight size={20} />
+                {v.title} <ChevronRight size={20} />
               </button>
             ))}
           </div>

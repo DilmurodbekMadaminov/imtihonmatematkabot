@@ -202,8 +202,8 @@ async function startServer() {
           return sendSubscriptionPrompt(ctx);
         }
 
-        const buttons = variants.map((_, i) => 
-          [Markup.button.callback(`Variant ${i + 1} (10 ta savol)`, `start_variant_${i}`)]
+        const buttons = variants.map((v, i) => 
+          [Markup.button.callback(v.title, `start_variant_${i}`)]
         );
         ctx.reply(
           "Salom! Men Matematika testini o'tkazuvchi botman.\n\nQaysi variantni ishlashni xohlaysiz?",
@@ -215,9 +215,9 @@ async function startServer() {
         const session = sessions.get(chatId);
         if (!session) return;
         
-        const currentVariant = variants[session.variantIndex];
+        const currentVariant = variants[session.variantIndex].questions;
         const q = currentVariant[session.currentQuestion];
-        const text = `Variant ${session.variantIndex + 1}\n\nSavol ${session.currentQuestion + 1} / ${currentVariant.length}\n\n${q.text}`;
+        const text = `${variants[session.variantIndex].title}\n\nSavol ${session.currentQuestion + 1} / ${currentVariant.length}\n\n${q.text}`;
         
         const buttons = q.options.map((opt, idx) => {
           return [Markup.button.callback(`${String.fromCharCode(65 + idx)}) ${opt}`, `ans_${idx}`)];
@@ -245,8 +245,8 @@ async function startServer() {
           return sendSubscriptionPrompt(ctx);
         }
 
-        const buttons = variants.map((_, i) => 
-          [Markup.button.callback(`Variant ${i + 1} (10 ta savol)`, `start_variant_${i}`)]
+        const buttons = variants.map((v, i) => 
+          [Markup.button.callback(v.title, `start_variant_${i}`)]
         );
         ctx.reply(
           "Qaysi variantni ishlashni xohlaysiz?",
@@ -258,8 +258,8 @@ async function startServer() {
         const isSubscribed = await checkSubscription(ctx);
         if (isSubscribed) {
           await ctx.deleteMessage().catch(() => {});
-          const buttons = variants.map((_, i) => 
-            [Markup.button.callback(`Variant ${i + 1} (10 ta savol)`, `start_variant_${i}`)]
+          const buttons = variants.map((v, i) => 
+            [Markup.button.callback(v.title, `start_variant_${i}`)]
           );
           ctx.reply(
             "Rahmat! Obuna tasdiqlandi.\n\nQaysi variantni ishlashni xohlaysiz?",
@@ -296,15 +296,15 @@ async function startServer() {
         session.answers.push(answerIdx);
         session.currentQuestion++;
 
-        if (session.currentQuestion < variants[session.variantIndex].length) {
+        if (session.currentQuestion < variants[session.variantIndex].questions.length) {
           await sendQuestion(ctx, chatId);
         } else {
-          const currentVariant = variants[session.variantIndex];
+          const currentVariant = variants[session.variantIndex].questions;
           const isCorrect = session.answers.map((ans, i) => ans === currentVariant[i].correct);
           const rawScore = isCorrect.filter(Boolean).length;
           const percentage = Math.round((rawScore / currentVariant.length) * 100);
 
-          let resultText = `🎉 Variant ${session.variantIndex + 1} yakunlandi!\n\n`;
+          let resultText = `🎉 ${variants[session.variantIndex].title} yakunlandi!\n\n`;
           resultText += `📊 To'g'ri javoblar: ${rawScore} / ${currentVariant.length}\n`;
           resultText += `🎯 Natija: ${percentage}%\n\n`;
           
@@ -313,8 +313,8 @@ async function startServer() {
             resultText += `${i + 1}-savol: ${correct ? "✅ To'g'ri" : "❌ Noto'g'ri"}\n`;
           });
 
-          const buttons = variants.map((_, i) => 
-            [Markup.button.callback(`Variant ${i + 1}`, `start_variant_${i}`)]
+          const buttons = variants.map((v, i) => 
+            [Markup.button.callback(v.title, `start_variant_${i}`)]
           );
 
           if (ctx.callbackQuery) {
