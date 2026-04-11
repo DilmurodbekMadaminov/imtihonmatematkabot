@@ -155,7 +155,7 @@ async function startServer() {
 
   app.get('/api/admin/stats', async (req, res) => {
     const authHeader = req.headers.authorization;
-    const adminPassword = process.env.ADMIN_PASSWORD || 'admin';
+    const adminPassword = process.env.ADMIN_PASSWORD || '1';
     
     if (!authHeader || authHeader !== `Bearer ${adminPassword}`) {
       return res.status(401).json({ error: 'Unauthorized' });
@@ -169,7 +169,7 @@ async function startServer() {
 
   app.get('/api/admin/users', async (req, res) => {
     const authHeader = req.headers.authorization;
-    const adminPassword = process.env.ADMIN_PASSWORD || 'admin';
+    const adminPassword = process.env.ADMIN_PASSWORD || '1';
     
     if (!authHeader || authHeader !== `Bearer ${adminPassword}`) {
       return res.status(401).json({ error: 'Unauthorized' });
@@ -181,7 +181,7 @@ async function startServer() {
 
   app.post('/api/admin/broadcast', async (req, res) => {
     const authHeader = req.headers.authorization;
-    const adminPassword = process.env.ADMIN_PASSWORD || 'admin';
+    const adminPassword = process.env.ADMIN_PASSWORD || '1';
     
     if (!authHeader || authHeader !== `Bearer ${adminPassword}`) {
       return res.status(401).json({ error: 'Unauthorized' });
@@ -230,7 +230,7 @@ async function startServer() {
       const adminChatIds = new Set<number>();
 
       bot.command('admin', async (ctx) => {
-        const adminPassword = process.env.ADMIN_PASSWORD || 'admin';
+        const adminPassword = process.env.ADMIN_PASSWORD || '1';
         const args = ctx.message.text.split(' ');
         
         const appUrl = process.env.VITE_APP_URL || 'https://ais-dev-zwxesqr7uajqrp3m5f64nl-286796810075.asia-east1.run.app';
