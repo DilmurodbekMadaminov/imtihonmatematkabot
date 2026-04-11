@@ -41,7 +41,7 @@ interface UserData {
 let userActivity = new Map<number, UserData>();
 
 async function trackUser(user: { id: number; first_name?: string; last_name?: string; username?: string }) {
-  const existing = userActivity.get(user.id) || {};
+  const existing = userActivity.get(user.id) || {} as Partial<UserData>;
   const data: UserData = {
     ...existing,
     timestamp: Date.now(),
@@ -227,10 +227,64 @@ async function startServer() {
         return next();
       });
 
-      bot.command('statistika', (ctx) => {
-        const total = userActivity.size;
-        const monthly = getMonthlyUsersCount();
+      const adminChatIds = new Set<number>();
+
+      bot.command('admin', async (ctx) => {
+        const adminPassword = process.env.ADMIN_PASSWORD || 'admin';
+        const args = ctx.message.text.split(' ');
+        
+        if (args.length > 1 && args[1] === adminPassword) {
+          adminChatIds.add(ctx.from.id);
+          ctx.reply('✅ Admin panelga xush kelibsiz! Quyidagi buyruqlardan foydalanishingiz mumkin:\n\n/stats - Statistika\n/users - Foydalanuvchilar ro\'yxati\n/broadcast <xabar> - Barchaga xabar yuborish');
+        } else if (adminChatIds.has(ctx.from.id)) {
+          ctx.reply('✅ Siz admin panelidasiz. Quyidagi buyruqlardan foydalanishingiz mumkin:\n\n/stats - Statistika\n/users - Foydalanuvchilar ro\'yxati\n/broadcast <xabar> - Barchaga xabar yuborish');
+        } else {
+          ctx.reply('Admin panelga kirish uchun parolni kiriting: /admin <parol>');
+        }
+      });
+
+      bot.command('stats', async (ctx) => {
+        if (!adminChatIds.has(ctx.from.id)) return;
+        const total = await getTotalUsersCount();
+        const monthly = await getMonthlyUsersCount();
         ctx.reply(`📊 Statistika:\n\n👥 Jami foydalanuvchilar: ${total}\n📅 Oylik faol foydalanuvchilar: ${monthly}`);
+      });
+
+      bot.command('users', async (ctx) => {
+        if (!adminChatIds.has(ctx.from.id)) return;
+        const usersList = await getAllUsers();
+        const topUsers = usersList.slice(0, 15);
+        let msg = `👥 Oxirgi 15 ta foydalanuvchi (Jami: ${usersList.length}):\n\n`;
+        topUsers.forEach((u, i) => {
+          msg += `${i+1}. ${u.firstName || ''} ${u.lastName || ''} ${u.username ? '(@' + u.username + ')' : ''} - ${u.testsTaken || 0} test, ${u.averageScore || 0}%\n`;
+        });
+        ctx.reply(msg);
+      });
+
+      bot.command('broadcast', async (ctx) => {
+        if (!adminChatIds.has(ctx.from.id)) return;
+        const message = ctx.message.text.replace('/broadcast', '').trim();
+        if (!message) {
+          return ctx.reply('Xabar matnini kiriting: /broadcast <xabar>');
+        }
+        
+        const usersList = await getAllUsers();
+        ctx.reply(`Xabar yuborish boshlandi (${usersList.length} ta foydalanuvchiga)...`);
+        
+        let successCount = 0;
+        let failCount = 0;
+        
+        for (const user of usersList) {
+          try {
+            await bot!.telegram.sendMessage(user.id, message);
+            successCount++;
+          } catch (e) {
+            failCount++;
+          }
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        
+        ctx.reply(`✅ Xabar yuborish yakunlandi.\n\nYetkazildi: ${successCount}\nXatolik: ${failCount}`);
       });
 
       const CHANNEL_USERNAME = '@dilmurodbekmatematika';
