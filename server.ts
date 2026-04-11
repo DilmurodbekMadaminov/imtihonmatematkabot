@@ -33,17 +33,23 @@ interface UserData {
   firstName?: string;
   lastName?: string;
   username?: string;
+  testsTaken?: number;
+  averageScore?: number;
 }
 
 // Fallback in-memory map if Firebase fails
 let userActivity = new Map<number, UserData>();
 
 async function trackUser(user: { id: number; first_name?: string; last_name?: string; username?: string }) {
+  const existing = userActivity.get(user.id) || {};
   const data: UserData = {
+    ...existing,
     timestamp: Date.now(),
     firstName: user.first_name,
     lastName: user.last_name,
-    username: user.username
+    username: user.username,
+    testsTaken: existing.testsTaken || 0,
+    averageScore: existing.averageScore || 0
   };
   
   userActivity.set(user.id, data);
@@ -53,6 +59,31 @@ async function trackUser(user: { id: number; first_name?: string; last_name?: st
       await setDoc(doc(db, 'users', user.id.toString()), data, { merge: true });
     } catch (e) {
       console.error('Error saving user to Firestore:', e);
+    }
+  }
+}
+
+async function trackTestResult(userId: number, percentage: number) {
+  const existing = userActivity.get(userId);
+  if (!existing) return;
+
+  const testsTaken = (existing.testsTaken || 0) + 1;
+  const currentTotalScore = (existing.averageScore || 0) * (existing.testsTaken || 0);
+  const averageScore = Math.round((currentTotalScore + percentage) / testsTaken);
+
+  const data: UserData = {
+    ...existing,
+    testsTaken,
+    averageScore
+  };
+
+  userActivity.set(userId, data);
+
+  if (db) {
+    try {
+      await setDoc(doc(db, 'users', userId.toString()), { testsTaken, averageScore }, { merge: true });
+    } catch (e) {
+      console.error('Error saving test result to Firestore:', e);
     }
   }
 }
@@ -146,6 +177,39 @@ async function startServer() {
     
     const usersList = await getAllUsers();
     res.json(usersList);
+  });
+
+  app.post('/api/admin/broadcast', async (req, res) => {
+    const authHeader = req.headers.authorization;
+    const adminPassword = process.env.ADMIN_PASSWORD || 'admin';
+    
+    if (!authHeader || authHeader !== `Bearer ${adminPassword}`) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    const { message } = req.body;
+    if (!message || !bot) {
+      return res.status(400).json({ error: 'Message or bot not available' });
+    }
+
+    const usersList = await getAllUsers();
+    let successCount = 0;
+    let failCount = 0;
+
+    // Send messages in background to avoid blocking the request
+    res.json({ status: 'started', totalUsers: usersList.length });
+
+    for (const user of usersList) {
+      try {
+        await bot.telegram.sendMessage(user.id, message);
+        successCount++;
+      } catch (e) {
+        failCount++;
+      }
+      // Add a small delay to avoid hitting Telegram API rate limits
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    console.log(`Broadcast finished. Success: ${successCount}, Failed: ${failCount}`);
   });
 
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
@@ -303,6 +367,8 @@ async function startServer() {
           const isCorrect = session.answers.map((ans, i) => ans === currentVariant[i].correct);
           const rawScore = isCorrect.filter(Boolean).length;
           const percentage = Math.round((rawScore / currentVariant.length) * 100);
+
+          await trackTestResult(chatId, percentage);
 
           let resultText = `🎉 ${variants[session.variantIndex].title} yakunlandi!\n\n`;
           resultText += `📊 To'g'ri javoblar: ${rawScore} / ${currentVariant.length}\n`;

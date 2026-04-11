@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Lock, LogOut, Activity } from 'lucide-react';
+import { Users, Lock, LogOut, Activity, Send, CheckCircle2 } from 'lucide-react';
 
 interface UserData {
   id: number;
@@ -7,6 +7,8 @@ interface UserData {
   firstName?: string;
   lastName?: string;
   username?: string;
+  testsTaken?: number;
+  averageScore?: number;
 }
 
 export default function AdminPanel() {
@@ -16,6 +18,9 @@ export default function AdminPanel() {
   const [usersList, setUsersList] = useState<UserData[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [broadcastMessage, setBroadcastMessage] = useState('');
+  const [broadcasting, setBroadcasting] = useState(false);
+  const [broadcastStatus, setBroadcastStatus] = useState('');
 
   useEffect(() => {
     const savedToken = localStorage.getItem('admin_token');
@@ -79,6 +84,37 @@ export default function AdminPanel() {
     setPassword('');
     setStats(null);
     localStorage.removeItem('admin_token');
+  };
+
+  const handleBroadcast = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!broadcastMessage.trim()) return;
+    
+    setBroadcasting(true);
+    setBroadcastStatus('');
+    
+    try {
+      const response = await fetch('/api/admin/broadcast', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${password}`
+        },
+        body: JSON.stringify({ message: broadcastMessage })
+      });
+      
+      if (response.ok) {
+        setBroadcastMessage('');
+        setBroadcastStatus('Xabar yuborish boshlandi!');
+        setTimeout(() => setBroadcastStatus(''), 5000);
+      } else {
+        setBroadcastStatus('Xatolik yuz berdi');
+      }
+    } catch (err) {
+      setBroadcastStatus('Xatolik yuz berdi');
+    } finally {
+      setBroadcasting(false);
+    }
   };
 
   if (!isAuthenticated) {
@@ -158,6 +194,43 @@ export default function AdminPanel() {
           </div>
         </div>
 
+        <div className="mt-8 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden p-6">
+          <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+            <Send size={24} className="text-indigo-600" />
+            Xabar yuborish (Broadcast)
+          </h2>
+          <form onSubmit={handleBroadcast} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Barcha foydalanuvchilarga xabar yuborish
+              </label>
+              <textarea
+                value={broadcastMessage}
+                onChange={(e) => setBroadcastMessage(e.target.value)}
+                className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all resize-y min-h-[100px]"
+                placeholder="Xabar matnini kiriting..."
+                required
+              />
+            </div>
+            <div className="flex items-center gap-4">
+              <button
+                type="submit"
+                disabled={broadcasting || !broadcastMessage.trim()}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-6 rounded-lg transition-colors disabled:opacity-70 flex items-center gap-2"
+              >
+                {broadcasting ? 'Yuborilmoqda...' : 'Yuborish'}
+                {!broadcasting && <Send size={18} />}
+              </button>
+              {broadcastStatus && (
+                <span className={`text-sm font-medium flex items-center gap-1 ${broadcastStatus.includes('Xatolik') ? 'text-red-500' : 'text-emerald-600'}`}>
+                  {!broadcastStatus.includes('Xatolik') && <CheckCircle2 size={16} />}
+                  {broadcastStatus}
+                </span>
+              )}
+            </div>
+          </form>
+        </div>
+
         <div className="mt-8 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
           <div className="p-6 border-b border-slate-200">
             <h2 className="text-xl font-bold text-slate-800">Foydalanuvchilar ro'yxati</h2>
@@ -169,6 +242,8 @@ export default function AdminPanel() {
                   <th className="p-4 font-medium">ID</th>
                   <th className="p-4 font-medium">Ism</th>
                   <th className="p-4 font-medium">Username</th>
+                  <th className="p-4 font-medium">Testlar soni</th>
+                  <th className="p-4 font-medium">O'rtacha natija</th>
                   <th className="p-4 font-medium">Oxirgi faollik</th>
                 </tr>
               </thead>
@@ -189,6 +264,12 @@ export default function AdminPanel() {
                         <span className="text-slate-400 italic">-</span>
                       )}
                     </td>
+                    <td className="p-4 text-sm text-slate-600 font-medium text-center">
+                      {user.testsTaken || 0}
+                    </td>
+                    <td className="p-4 text-sm text-slate-600 font-medium text-center">
+                      {user.averageScore ? `${user.averageScore}%` : '-'}
+                    </td>
                     <td className="p-4 text-sm text-slate-600">
                       {new Date(user.timestamp).toLocaleString('uz-UZ')}
                     </td>
@@ -196,7 +277,7 @@ export default function AdminPanel() {
                 ))}
                 {usersList.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="p-8 text-center text-slate-500">
+                    <td colSpan={6} className="p-8 text-center text-slate-500">
                       Hozircha foydalanuvchilar yo'q
                     </td>
                   </tr>
