@@ -233,11 +233,16 @@ async function startServer() {
         const adminPassword = process.env.ADMIN_PASSWORD || 'admin';
         const args = ctx.message.text.split(' ');
         
+        const appUrl = process.env.VITE_APP_URL || 'https://ais-dev-zwxesqr7uajqrp3m5f64nl-286796810075.asia-east1.run.app';
+        const adminKeyboard = Markup.inlineKeyboard([
+          [Markup.button.webApp("🌐 Web Admin Panelni ochish", `${appUrl}/admin`)]
+        ]);
+        
         if (args.length > 1 && args[1] === adminPassword) {
           adminChatIds.add(ctx.from.id);
-          ctx.reply('✅ Admin panelga xush kelibsiz! Quyidagi buyruqlardan foydalanishingiz mumkin:\n\n/stats - Statistika\n/users - Foydalanuvchilar ro\'yxati\n/broadcast <xabar> - Barchaga xabar yuborish');
+          ctx.reply('✅ Admin panelga xush kelibsiz! Quyidagi buyruqlardan foydalanishingiz yoki Web panelni ochishingiz mumkin:\n\n/stats - Statistika\n/users - Foydalanuvchilar ro\'yxati\n/broadcast <xabar> - Barchaga xabar yuborish', adminKeyboard);
         } else if (adminChatIds.has(ctx.from.id)) {
-          ctx.reply('✅ Siz admin panelidasiz. Quyidagi buyruqlardan foydalanishingiz mumkin:\n\n/stats - Statistika\n/users - Foydalanuvchilar ro\'yxati\n/broadcast <xabar> - Barchaga xabar yuborish');
+          ctx.reply('✅ Siz admin panelidasiz. Quyidagi buyruqlardan foydalanishingiz yoki Web panelni ochishingiz mumkin:\n\n/stats - Statistika\n/users - Foydalanuvchilar ro\'yxati\n/broadcast <xabar> - Barchaga xabar yuborish', adminKeyboard);
         } else {
           ctx.reply('Admin panelga kirish uchun parolni kiriting: /admin <parol>');
         }
