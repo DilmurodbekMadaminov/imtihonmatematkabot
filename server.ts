@@ -1043,14 +1043,15 @@ async function startServer() {
           return sendSubscriptionPrompt(ctx);
         }
 
-        await ctx.reply("🏛 Testlar menyusi:", getMainMenuKeyboard());
+        await ctx.reply("🏛 Onlayn testlar bo'limi:", getMainMenuKeyboard());
 
-        const buttons = [
-          [Markup.button.callback("🏛 Online Testlar", "choose_online_tests")],
-          [Markup.button.callback("📂 PDF Testlar", "choose_pdf_tests")]
-        ];
+        const buttons = variants.map((v, i) => 
+          [Markup.button.callback(v.title, `start_variant_${i}`)]
+        );
+        buttons.push([Markup.button.callback("⬅️ Orqaga", "back_to_main_menu")]);
+
         ctx.reply(
-          "Iltimos, test turini tanlang:",
+          "Qaysi online variantni ishlashni xohlaysiz?",
           Markup.inlineKeyboard(buttons)
         );
       });
