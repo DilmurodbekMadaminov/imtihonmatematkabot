@@ -337,11 +337,9 @@ async function startServer() {
       });
 
       const getAdminKeyboard = () => {
-        const appUrl = process.env.VITE_APP_URL || 'https://ais-dev-zwxesqr7uajqrp3m5f64nl-286796810075.asia-east1.run.app';
         return Markup.inlineKeyboard([
           [Markup.button.callback("📊 Statistika", "admin_stats"), Markup.button.callback("👥 Foydalanuvchilar", "admin_users")],
           [Markup.button.callback("📢 E'lon yuborish", "admin_broadcast"), Markup.button.callback("⚙️ Kanalni sozlash", "admin_channel")],
-          [Markup.button.webApp("🌐 Web Admin Panel", `${appUrl}/admin`)],
           [Markup.button.callback("❓ Yordam", "admin_help"), Markup.button.callback("🚪 Chiqish", "admin_logout")]
         ]);
       };

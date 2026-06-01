@@ -7,7 +7,6 @@ import React, { useState, useMemo } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { CheckCircle2, XCircle, ChevronRight, RotateCcw, BrainCircuit, BarChart3, Target, Activity } from 'lucide-react';
 import { variants } from './questions';
-import AdminPanel from './AdminPanel';
 
 function QuizApp() {
   const [selectedVariant, setSelectedVariant] = useState<number | null>(null);
@@ -222,7 +221,6 @@ export default function App() {
     <Router>
       <Routes>
         <Route path="/" element={<QuizApp />} />
-        <Route path="/admin" element={<AdminPanel />} />
       </Routes>
     </Router>
   );
