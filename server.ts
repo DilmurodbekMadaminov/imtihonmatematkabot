@@ -6,7 +6,6 @@ import fs from "fs";
 import { variants } from "./src/questions.js";
 import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, setDoc, getDoc, getDocs, collection, query, where, Timestamp } from 'firebase/firestore';
-import multer from "multer";
 
 const firebaseConfigPath = path.join(process.cwd(), 'firebase-applet-config.json');
 let db: any = null;
@@ -24,115 +23,6 @@ try {
   console.error("Error initializing Firebase:", e);
 }
 
-// Multer and local Uploads configuration
-const uploadsDir = path.join(process.cwd(), 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadsDir);
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    cb(null, uniqueSuffix + '-' + file.originalname.replace(/[^a-zA-Z0-9.\-_]/g, '_'));
-  }
-});
-const upload = multer({ storage: storage });
-
-export interface PdfTest {
-  id: string;
-  title: string;
-  pdfUrl: string;
-  answers: string;
-  questionsCount: number;
-  createdAt: number;
-}
-
-export interface PdfSession {
-  testId: string;
-  currentQuestion: number;
-  answers: string[];
-}
-
-const pdfSessions = new Map<number, PdfSession>();
-const userStates = new Map<number, string>(); // tracks user states, e.g., 'calculator'
-let pdfTestsInMemory: PdfTest[] = [];
-
-function parseAnswerKey(text: string): string {
-  let cleaned = text.trim().toLowerCase();
-  
-  // Try to match "1-a, 2-b, 3-c" or "1:a, 2:b" etc.
-  const pairedMatches = [...cleaned.matchAll(/(\d+)[\s-:]*([a-d])/g)];
-  if (pairedMatches.length > 0) {
-    pairedMatches.sort((a, b) => parseInt(a[1]) - parseInt(b[1]));
-    return pairedMatches.map(m => m[2]).join('');
-  }
-  
-  return cleaned.replace(/[^a-d]/g, '');
-}
-
-async function loadPdfTests(): Promise<PdfTest[]> {
-  if (db) {
-    try {
-      const q = query(collection(db, 'pdf_tests'));
-      const snapshot = await getDocs(q);
-      const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PdfTest));
-      list.sort((a, b) => b.createdAt - a.createdAt);
-      pdfTestsInMemory = list;
-      return list;
-    } catch (e) {
-      console.error("Error loading pdf tests from Firestore:", e);
-    }
-  }
-  return pdfTestsInMemory;
-}
-
-async function addPdfTest(test: PdfTest) {
-  const index = pdfTestsInMemory.findIndex(t => t.id === test.id);
-  if (index === -1) {
-    pdfTestsInMemory.push(test);
-  } else {
-    pdfTestsInMemory[index] = test;
-  }
-  pdfTestsInMemory.sort((a, b) => b.createdAt - a.createdAt);
-  if (db) {
-    try {
-      await setDoc(doc(db, 'pdf_tests', test.id), test);
-    } catch (e) {
-      console.error("Error saving pdf test to Firestore:", e);
-    }
-  }
-}
-
-async function removePdfTest(id: string): Promise<boolean> {
-  const index = pdfTestsInMemory.findIndex(t => t.id === id);
-  if (index === -1) return false;
-  const test = pdfTestsInMemory[index];
-  pdfTestsInMemory.splice(index, 1);
-  
-  if (db) {
-    try {
-      const { deleteDoc } = await import('firebase/firestore');
-      await deleteDoc(doc(db, 'pdf_tests', id));
-    } catch (e) {
-      console.error("Error deleting pdf test from Firestore:", e);
-    }
-  }
-  
-  try {
-    const filename = path.basename(test.pdfUrl);
-    const filePath = path.join(uploadsDir, filename);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
-  } catch (err) {
-    console.error("Error deleting physical pdf file:", err);
-  }
-  return true;
-}
-
 interface UserData {
   timestamp: number;
   firstName?: string;
@@ -146,33 +36,7 @@ interface UserData {
 // Global settings stored persistently
 let globalSettings = {
   channelUsername: '@dilmurodbekmatematika',
-  channels: ['@dilmurodbekmatematika'],
-  mandatoryTestsEnabled: true,
-  otherSectionEnabled: true,
-  otherSectionTitle: "ℹ️ Ma'lumot va Qoidalar",
-  otherSectionContent: "📝 **Botdan foydalanish qoidalari va yordam:**\n\n1. Har bir testni diqqat bilan yeching.\n2. Natijalar avtomatik ravishda saqlanadi.\n3. Har bir savol uchun belgilangan vaqt cheklanmagan."
-};
-
-const getMainMenuKeyboard = () => {
-  const buttons: any[][] = [];
-  const row1: any[] = [];
-  
-  if (globalSettings.mandatoryTestsEnabled !== false) {
-    row1.push("📝 Testlar Bo'limi");
-  }
-  if (row1.length > 0) {
-    buttons.push(row1);
-  }
-
-  const row2: any[] = [];
-  if (globalSettings.otherSectionEnabled !== false) {
-    row2.push(globalSettings.otherSectionTitle || "ℹ️ Ma'lumot va Qoidalar");
-  }
-  if (row2.length > 0) {
-    buttons.push(row2);
-  }
-  
-  return Markup.keyboard(buttons).resize();
+  channels: ['@dilmurodbekmatematika']
 };
 
 async function loadSettings() {
@@ -190,12 +54,6 @@ async function loadSettings() {
           } else if (data.channelUsername) {
             globalSettings.channels = [data.channelUsername];
           }
-          
-          globalSettings.mandatoryTestsEnabled = data.mandatoryTestsEnabled !== undefined ? !!data.mandatoryTestsEnabled : true;
-          globalSettings.otherSectionEnabled = data.otherSectionEnabled !== undefined ? !!data.otherSectionEnabled : true;
-          globalSettings.otherSectionTitle = data.otherSectionTitle || "ℹ️ Ma'lumot va Qoidalar";
-          globalSettings.otherSectionContent = data.otherSectionContent || globalSettings.otherSectionContent;
-
           console.log("Global settings loaded from Firebase:", globalSettings);
         }
       } else {
@@ -389,7 +247,6 @@ async function startServer() {
 
   // Load configuration and prime the local cache on startup
   await loadSettings();
-  await loadPdfTests();
   if (db) {
     try {
       const snapshot = await getDocs(collection(db, 'users'));
@@ -403,16 +260,7 @@ async function startServer() {
     }
   }
 
-  // Intercept domain to set baseUrl dynamically for file downloads
-  app.use((req, res, next) => {
-    if (req.get('host') && !(globalSettings as any).baseUrl) {
-      (globalSettings as any).baseUrl = `${req.protocol}://${req.get('host')}`;
-    }
-    next();
-  });
-
   app.use(express.json());
-  app.use('/uploads', express.static(uploadsDir));
 
   app.get('/api/admin/stats', async (req, res) => {
     const authHeader = req.headers.authorization;
@@ -471,125 +319,6 @@ async function startServer() {
       await new Promise(resolve => setTimeout(resolve, 50));
     }
     console.log(`Broadcast finished. Success: ${successCount}, Failed: ${failCount}`);
-  });
-
-  // Admin-specific custom sections settings
-  app.get('/api/admin/settings', async (req, res) => {
-    const authHeader = req.headers.authorization;
-    const adminPassword = process.env.ADMIN_PASSWORD || '1';
-    
-    if (!authHeader || authHeader !== `Bearer ${adminPassword}`) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-    
-    res.json(globalSettings);
-  });
-
-  app.post('/api/admin/settings', async (req, res) => {
-    const authHeader = req.headers.authorization;
-    const adminPassword = process.env.ADMIN_PASSWORD || '1';
-    
-    if (!authHeader || authHeader !== `Bearer ${adminPassword}`) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-    
-    try {
-      const { 
-        channels,
-        mandatoryTestsEnabled, 
-        otherSectionEnabled, 
-        otherSectionTitle, 
-        otherSectionContent 
-      } = req.body;
-
-      if (Array.isArray(channels)) {
-        globalSettings.channels = channels;
-        if (channels.length > 0) {
-          globalSettings.channelUsername = channels[0];
-        }
-      }
-
-      if (mandatoryTestsEnabled !== undefined) globalSettings.mandatoryTestsEnabled = !!mandatoryTestsEnabled;
-      if (otherSectionEnabled !== undefined) globalSettings.otherSectionEnabled = !!otherSectionEnabled;
-      if (otherSectionTitle !== undefined) globalSettings.otherSectionTitle = otherSectionTitle;
-      if (otherSectionContent !== undefined) globalSettings.otherSectionContent = otherSectionContent;
-
-      if (db) {
-        await setDoc(doc(db, 'settings', 'config'), globalSettings, { merge: true });
-      }
-      
-      res.json({ success: true, settings: globalSettings });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Xatolik yuz berdi' });
-    }
-  });
-
-  // PDF Tests APIs
-  app.get('/api/pdf-tests', async (req, res) => {
-    try {
-      const list = await loadPdfTests();
-      res.json(list);
-    } catch (err) {
-      res.status(500).json({ error: 'Xatolik yuz berdi' });
-    }
-  });
-
-  app.post('/api/admin/pdf-tests', upload.single('pdf'), async (req, res) => {
-    const authHeader = req.headers.authorization;
-    const adminPassword = process.env.ADMIN_PASSWORD || '1';
-    
-    if (!authHeader || authHeader !== `Bearer ${adminPassword}`) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-    
-    try {
-      const { title, answers } = req.body;
-      if (!title || !answers || !req.file) {
-        return res.status(400).json({ error: "Sarlavha, javoblar kaliti va PDF ko'rinishidagi fayl majburiy!" });
-      }
-      
-      const parsedAnswers = parseAnswerKey(answers);
-      if (parsedAnswers.length === 0) {
-        return res.status(400).json({ error: "Javoblar kaliti noto'g'ri. Faqat a, b, c, d harflarini kiriting!" });
-      }
-      
-      const fileUrl = `/uploads/${req.file.filename}`;
-      
-      const newTest: PdfTest = {
-        id: 'pdf_' + Date.now().toString(),
-        title: title.trim(),
-        pdfUrl: fileUrl,
-        answers: parsedAnswers,
-        questionsCount: parsedAnswers.length,
-        createdAt: Date.now()
-      };
-      
-      await addPdfTest(newTest);
-      res.status(201).json(newTest);
-    } catch (err: any) {
-      console.error(err);
-      res.status(500).json({ error: err.message || 'Server xatoligi' });
-    }
-  });
-
-  app.delete('/api/admin/pdf-tests/:id', async (req, res) => {
-    const authHeader = req.headers.authorization;
-    const adminPassword = process.env.ADMIN_PASSWORD || '1';
-    
-    if (!authHeader || authHeader !== `Bearer ${adminPassword}`) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-    
-    try {
-      const deleted = await removePdfTest(req.params.id);
-      if (deleted) {
-        res.json({ success: true });
-      } else {
-        res.status(404).json({ error: 'Test topilmadi' });
-      }
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Server xatoligi' });
-    }
   });
 
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
@@ -762,102 +491,6 @@ async function startServer() {
         const userId = ctx.from?.id;
         if (!userId) return next();
 
-        const msgText = ctx.message.text ? ctx.message.text.trim() : "";
-        
-        // Handle bottom menu button triggers (unless it's an command starting with '/')
-        if (msgText === "📝 Testlar Bo'limi") {
-          userStates.delete(userId);
-          const isSubscribed = await checkSubscription(ctx);
-          if (!isSubscribed) {
-            return sendSubscriptionPrompt(ctx);
-          }
-          const buttons = [
-            [Markup.button.callback("🏛 Online Testlar", "choose_online_tests")],
-            [Markup.button.callback("📂 PDF Testlar", "choose_pdf_tests")]
-          ];
-          return ctx.reply("🏛 Testlar Bo'limiga xush kelibsiz! Qaysi test turidan foydalanmoqchisiz?", Markup.inlineKeyboard(buttons));
-        }
-
-        if (msgText === (globalSettings.otherSectionTitle || "ℹ️ Ma'lumot va Qoidalar")) {
-          userStates.delete(userId);
-          return ctx.reply(globalSettings.otherSectionContent || '', { parse_mode: 'Markdown' });
-        }
-
-        if (msgText.startsWith('/')) {
-          return next();
-        }
-
-        // PDF Test Text Submission interceptor
-        const chatId = ctx.chat?.id;
-        if (chatId && pdfSessions.has(chatId)) {
-          const pdfSession = pdfSessions.get(chatId)!;
-          if (pdfSession.currentQuestion === -1) {
-            const list = await loadPdfTests();
-            const pTest = list.find(t => t.id === pdfSession.testId);
-            if (!pTest) {
-              pdfSessions.delete(chatId);
-              return ctx.reply("❌ Test topilmadi. Iltimos qaytadan boshlang.");
-            }
-            
-            const inputText = ctx.message.text.trim();
-            if (inputText.toLowerCase() === '/cancel' || inputText.toLowerCase() === 'cancel' || inputText === 'bekor qilish') {
-              pdfSessions.delete(chatId);
-              return ctx.reply("❌ Javob topshirish bekor qilindi.");
-            }
-
-            const parsedAnswers = parseAnswerKey(inputText);
-            if (parsedAnswers.length === 0) {
-              return ctx.reply("❌ Hech qanday javoblar kaliti aniqlanmadi (Masalan: '1a 2b 3c' yoki 'abcd'). Iltimos, qaytadan yuboring yoki bekor qilish uchun /cancel deb yozing:");
-            }
-            
-            if (parsedAnswers.length !== pTest.questionsCount) {
-              return ctx.reply(`⚠️ Bu test ${pTest.questionsCount} ta savoldan iborat, lekin siz ${parsedAnswers.length} ta javob yubordingiz.\n\nIltimos, barcha savollarga javoblarni to'liq yuboring (Masalan: 'abcdabcd...'):`);
-            }
-
-            let correctCount = 0;
-            const correctKey = pTest.answers.toLowerCase();
-            const resultsAnalysis: boolean[] = [];
-            
-            for (let i = 0; i < pTest.questionsCount; i++) {
-              const userAns = parsedAnswers[i];
-              const correctAns = correctKey[i];
-              const correct = (userAns === correctAns);
-              resultsAnalysis.push(correct);
-              if (correct) correctCount++;
-            }
-            
-            const percentage = Math.round((correctCount / pTest.questionsCount) * 100);
-            await trackTestResult(chatId, percentage);
-
-            if (db) {
-              try {
-                await setDoc(doc(db, 'pdf_test_results', `${chatId}_${pTest.id}`), {
-                  userId: chatId,
-                  testId: pTest.id,
-                  testTitle: pTest.title,
-                  correctCount,
-                  totalQuestions: pTest.questionsCount,
-                  percentage,
-                  timestamp: Date.now()
-                });
-              } catch (e) {
-                console.error("Error saving PDF test result to Firestore:", e);
-              }
-            }
-
-            let resultText = `🎉 **${pTest.title}** muvaffaqiyatli topshirildi!\n\n`;
-            resultText += `📊 **Natija:** ${correctCount} / ${pTest.questionsCount} ta to'g'ri (${percentage}%)\n\n`;
-            resultText += `📝 **Batafsil tahlil:**\n`;
-            
-            resultsAnalysis.forEach((isCorrect, i) => {
-              resultText += `${i + 1}-savol: ${isCorrect ? "✅ To'g'ri" : `❌ Noto'g'ri (Siz: ${parsedAnswers[i].toUpperCase()}, J: ${correctKey[i].toUpperCase()})`}\n`;
-            });
-
-            pdfSessions.delete(chatId);
-            return ctx.reply(resultText, { parse_mode: 'Markdown' });
-          }
-        }
-
         const session = adminSessions.get(userId);
         if (session) {
           const isUserAdmin = await checkIfAdmin(userId);
@@ -997,14 +630,11 @@ async function startServer() {
       });
 
       bot.start(async (ctx) => {
-        await ctx.reply("👋 Matematika test botimizga xush kelibsiz!", getMainMenuKeyboard());
-        
-        const buttons = [
-          [Markup.button.callback("🏛 Online Testlar", "choose_online_tests")],
-          [Markup.button.callback("📂 PDF Testlar", "choose_pdf_tests")]
-        ];
+        const buttons = variants.map((v, i) => 
+          [Markup.button.callback(v.title, `start_variant_${i}`)]
+        );
         ctx.reply(
-          "Iltimos, quyidagi test turidan birini tanlang:",
+          "Salom! Men Matematika testini o'tkazuvchi botman.\n\nQaysi variantni ishlashni xohlaysiz?",
           Markup.inlineKeyboard(buttons)
         );
       });
@@ -1043,259 +673,29 @@ async function startServer() {
           return sendSubscriptionPrompt(ctx);
         }
 
-        await ctx.reply("🏛 Onlayn testlar bo'limi:", getMainMenuKeyboard());
-
         const buttons = variants.map((v, i) => 
           [Markup.button.callback(v.title, `start_variant_${i}`)]
         );
-        buttons.push([Markup.button.callback("⬅️ Orqaga", "back_to_main_menu")]);
-
         ctx.reply(
-          "Qaysi online variantni ishlashni xohlaysiz?",
+          "Qaysi variantni ishlashni xohlaysiz?",
           Markup.inlineKeyboard(buttons)
         );
-      });
-
-      bot.action('back_to_main_menu', async (ctx) => {
-        const buttons = [
-          [Markup.button.callback("🏛 Online Testlar", "choose_online_tests")],
-          [Markup.button.callback("📂 PDF Testlar", "choose_pdf_tests")]
-        ];
-        await ctx.editMessageText(
-          "Iltimos, quyidagi test turidan birini tanlang:",
-          Markup.inlineKeyboard(buttons)
-        ).catch(console.error);
-        await ctx.answerCbQuery();
-      });
-
-      bot.action('choose_online_tests', async (ctx) => {
-        const isSubscribed = await checkSubscription(ctx);
-        if (!isSubscribed) {
-          return sendSubscriptionPrompt(ctx);
-        }
-        
-        const buttons = variants.map((v, i) => 
-          [Markup.button.callback(v.title, `start_variant_${i}`)]
-        );
-        buttons.push([Markup.button.callback("⬅️ Orqaga", "back_to_main_menu")]);
-        
-        await ctx.editMessageText("Qaysi online variantni ishlashni xohlaysiz?", Markup.inlineKeyboard(buttons)).catch(console.error);
-        await ctx.answerCbQuery();
-      });
-
-      bot.action('choose_pdf_tests', async (ctx) => {
-        const isSubscribed = await checkSubscription(ctx);
-        if (!isSubscribed) {
-          return sendSubscriptionPrompt(ctx);
-        }
-        
-        const list = await loadPdfTests();
-        if (list.length === 0) {
-          const buttons = [[Markup.button.callback("⬅️ Orqaga", "back_to_main_menu")]];
-          await ctx.editMessageText("Hozircha PDF formatida yuklangan testlar mavjud emas.", Markup.inlineKeyboard(buttons)).catch(console.error);
-          return ctx.answerCbQuery();
-        }
-        
-        const buttons = list.map(test => 
-          [Markup.button.callback(test.title, `pdf_info_${test.id}`)]
-        );
-        buttons.push([Markup.button.callback("⬅️ Orqaga", "back_to_main_menu")]);
-        
-        await ctx.editMessageText("Quyidagi PDF testlardan birini tanlang:", Markup.inlineKeyboard(buttons)).catch(console.error);
-        await ctx.answerCbQuery();
       });
 
       bot.action('check_sub', async (ctx) => {
         const isSubscribed = await checkSubscription(ctx);
         if (isSubscribed) {
           await ctx.deleteMessage().catch(() => {});
-          await ctx.reply("Rahmat! Obuna tasdiqlandi.", getMainMenuKeyboard());
-          const buttons = [
-            [Markup.button.callback("🏛 Online Testlar", "choose_online_tests")],
-            [Markup.button.callback("📂 PDF Testlar", "choose_pdf_tests")]
-          ];
+          const buttons = variants.map((v, i) => 
+            [Markup.button.callback(v.title, `start_variant_${i}`)]
+          );
           ctx.reply(
-            "Iltimos, quyidagi test turidan birini tanlang:",
+            "Rahmat! Obuna tasdiqlandi.\n\nQaysi variantni ishlashni xohlaysiz?",
             Markup.inlineKeyboard(buttons)
           );
         } else {
           ctx.answerCbQuery("Siz hali kanalga obuna bo'lmagansiz!", { show_alert: true });
         }
-      });
-
-      bot.action(/pdf_info_(.+)/, async (ctx) => {
-        const isSubscribed = await checkSubscription(ctx);
-        if (!isSubscribed) {
-          return sendSubscriptionPrompt(ctx);
-        }
-        
-        const testId = ctx.match[1].split('_')[0]; // Simple safety
-        const list = await loadPdfTests();
-        const test = list.find(t => t.id === ctx.match[1]);
-        if (!test) {
-          return ctx.answerCbQuery("Test topilmadi!", { show_alert: true });
-        }
-        
-        const domain = (globalSettings as any).baseUrl || 'https://math-test-bot-preview';
-        const absolutePdfUrl = test.pdfUrl.startsWith('http') ? test.pdfUrl : `${domain}${test.pdfUrl}`;
-        
-        let infoText = `📂 **PDF Test:** ${test.title}\n\n`;
-        infoText += `📝 **Savollar soni:** ${test.questionsCount} ta\n`;
-        infoText += `📅 **Yuklangan vaqt:** ${new Date(test.createdAt).toLocaleDateString()}\n\n`;
-        infoText += `📥 PDF faylini yuklab olib, savollarni yeching va javoblarni quyidagi ikki usuldan biri orqali topshiring:\n\n`;
-        infoText += `1️⃣ **Tugmalar orqali belgilash:** Quyidagi 'Tugmalar orqali' tugmasini bosing va interaktiv tarzda A, B, C, D variantlarni belgilab chiqing.\n\n`;
-        infoText += `2️⃣ **Matn orqali birda yuborish:** 'Matn orqali yuborish' tugmasini bosing, so'ngra bir qatorda (Masalan: \`1a2b3c4d...\` yoki \`abcdabcd...\`) javoblarni yozib jo'nating!`;
-        
-        const buttons = [
-          [Markup.button.url("📥 PDF Yuklab Olish", absolutePdfUrl)],
-          [
-            Markup.button.callback("🔘 Tugmalar orqali", `pdf_solve_start_${test.id}`),
-            Markup.button.callback("✍️ Matn orqali yuborish", `pdf_submit_text_${test.id}`)
-          ],
-          [Markup.button.callback("⬅️ Orqaga", "choose_pdf_tests")]
-        ];
-        
-        await ctx.editMessageText(infoText, {
-          parse_mode: 'Markdown',
-          reply_markup: Markup.inlineKeyboard(buttons).reply_markup
-        }).catch(console.error);
-        
-        await ctx.answerCbQuery();
-      });
-
-      bot.action(/pdf_submit_text_(.+)/, async (ctx) => {
-        const testId = ctx.match[1];
-        const list = await loadPdfTests();
-        const test = list.find(t => t.id === testId);
-        if (!test) return ctx.answerCbQuery("Test topilmadi!", { show_alert: true });
-        
-        const chatId = ctx.chat?.id;
-        if (!chatId) return;
-        
-        pdfSessions.set(chatId, { testId, currentQuestion: -1, answers: [] });
-        
-        await ctx.reply(`✍️ **${test.title}** muvaffaqiyatli tanlandi!\n\nJavoblaringizni bitta xabarda yuboring.\nMasalan: \`1a2b3c4d...\` yoki \`abcdabcd...\` ko'rinishida jo'nating.\n\nBekor qilish uchun: /cancel`, { parse_mode: 'Markdown' });
-        await ctx.answerCbQuery();
-      });
-
-      const sendPdfQuestion = async (ctx: any, chatId: number) => {
-        const session = pdfSessions.get(chatId);
-        if (!session) return;
-        
-        const list = await loadPdfTests();
-        const test = list.find(t => t.id === session.testId);
-        if (!test) return;
-        
-        const text = `📁 **${test.title}**\n\nSavol ${session.currentQuestion + 1} / ${test.questionsCount}\n\nJavobingiz variantini belgilang:`;
-        
-        const options = ['A', 'B', 'C', 'D'];
-        const buttons = [
-          options.map((opt, idx) => Markup.button.callback(opt, `pdf_ans_${idx}`)),
-          [Markup.button.callback("❌ Chiqish", "pdf_solve_cancel")]
-        ];
-        
-        if (ctx.callbackQuery) {
-          await ctx.editMessageText(text, Markup.inlineKeyboard(buttons)).catch(console.error);
-        } else {
-          await ctx.reply(text, Markup.inlineKeyboard(buttons)).catch(console.error);
-        }
-      };
-
-      bot.action(/pdf_solve_start_(.+)/, async (ctx) => {
-        const testId = ctx.match[1];
-        const list = await loadPdfTests();
-        const test = list.find(t => t.id === testId);
-        if (!test) return ctx.answerCbQuery("Test topilmadi!", { show_alert: true });
-        
-        const chatId = ctx.chat?.id;
-        if (!chatId) return;
-        
-        pdfSessions.set(chatId, { testId, currentQuestion: 0, answers: [] });
-        await sendPdfQuestion(ctx, chatId);
-        await ctx.answerCbQuery();
-      });
-
-      bot.action(/pdf_ans_(\d+)/, async (ctx) => {
-        const chatId = ctx.chat?.id;
-        if (!chatId) return;
-        
-        const session = pdfSessions.get(chatId);
-        if (!session || session.currentQuestion === -1) {
-          return ctx.answerCbQuery("Sessiya topilmadi!", { show_alert: true });
-        }
-        
-        const list = await loadPdfTests();
-        const test = list.find(t => t.id === session.testId);
-        if (!test) return;
-        
-        const idxToLetter = ['a', 'b', 'c', 'd'];
-        const chosen = idxToLetter[parseInt(ctx.match[1])];
-        session.answers.push(chosen);
-        session.currentQuestion++;
-        
-        if (session.currentQuestion < test.questionsCount) {
-          await sendPdfQuestion(ctx, chatId);
-        } else {
-          let correctCount = 0;
-          const correctKey = test.answers.toLowerCase();
-          const resultsAnalysis: boolean[] = [];
-          
-          for (let i = 0; i < test.questionsCount; i++) {
-            const userAns = session.answers[i];
-            const correctAns = correctKey[i];
-            const correct = (userAns === correctAns);
-            resultsAnalysis.push(correct);
-            if (correct) correctCount++;
-          }
-          
-          const percentage = Math.round((correctCount / test.questionsCount) * 100);
-          await trackTestResult(chatId, percentage);
-
-          if (db) {
-            try {
-              await setDoc(doc(db, 'pdf_test_results', `${chatId}_${test.id}`), {
-                userId: chatId,
-                testId: test.id,
-                testTitle: test.title,
-                correctCount,
-                totalQuestions: test.questionsCount,
-                percentage,
-                timestamp: Date.now()
-              });
-            } catch (e) {
-              console.error("Error saving PDF test result to Firestore:", e);
-            }
-          }
-
-          let resultText = `🎉 **${test.title}** muvaffaqiyatli yakunlandi!\n\n`;
-          resultText += `📊 **To'g'ri javoblar:** ${correctCount} / ${test.questionsCount} ta (${percentage}%)\n\n`;
-          resultText += `📝 **Ketma-ket tahlil:**\n`;
-          
-          resultsAnalysis.forEach((isCorrect, i) => {
-            const userChoiceChar = session.answers[i] || '-';
-            resultText += `${i + 1}-savol: ${isCorrect ? "✅ To'g'ri" : `❌ Noto'g'ri (Siz: ${userChoiceChar.toUpperCase()}, J: ${correctKey[i].toUpperCase()})`}\n`;
-          });
-          
-          const buttons = [[Markup.button.callback("⬅️ Orqaga", "choose_pdf_tests")]];
-          
-          await ctx.editMessageText(resultText, {
-            parse_mode: 'Markdown',
-            reply_markup: Markup.inlineKeyboard(buttons).reply_markup
-          }).catch(console.error);
-          
-          pdfSessions.delete(chatId);
-        }
-        await ctx.answerCbQuery();
-      });
-
-      bot.action('pdf_solve_cancel', async (ctx) => {
-        const chatId = ctx.chat?.id;
-        if (chatId) {
-          pdfSessions.delete(chatId);
-        }
-        const buttons = [[Markup.button.callback("⬅️ Orqaga", "choose_pdf_tests")]];
-        await ctx.editMessageText("❌ Test bekor qilindi.", Markup.inlineKeyboard(buttons)).catch(console.error);
-        await ctx.answerCbQuery();
       });
 
       bot.action(/start_variant_(\d+)/, async (ctx) => {
