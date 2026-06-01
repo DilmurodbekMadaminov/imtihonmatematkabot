@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Lock, LogOut, Activity, Send, CheckCircle2, FileText, FileUp, Trash2, Plus } from 'lucide-react';
+import { Users, Lock, LogOut, Activity, Send, CheckCircle2, FileText, FileUp, Trash2, Plus, Settings } from 'lucide-react';
 
 interface UserData {
   id: number;
@@ -40,6 +40,17 @@ export default function AdminPanel() {
   const [uploadSuccess, setUploadSuccess] = useState('');
   const [uploadingTest, setUploadingTest] = useState(false);
 
+  // Bot sections settings state
+  const [calculatorEnabled, setCalculatorEnabled] = useState(true);
+  const [calculatorContent, setCalculatorContent] = useState('');
+  const [mandatoryTestsEnabled, setMandatoryTestsEnabled] = useState(true);
+  const [otherSectionEnabled, setOtherSectionEnabled] = useState(true);
+  const [otherSectionTitle, setOtherSectionTitle] = useState('');
+  const [otherSectionContent, setOtherSectionContent] = useState('');
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const [settingsSuccess, setSettingsSuccess] = useState('');
+  const [settingsError, setSettingsError] = useState('');
+
   useEffect(() => {
     const savedToken = localStorage.getItem('admin_token');
     if (savedToken) {
@@ -58,6 +69,62 @@ export default function AdminPanel() {
       }
     } catch (err) {
       console.error('Error fetching pdf tests:', err);
+    }
+  };
+
+  const fetchSettings = async (token: string) => {
+    try {
+      const response = await fetch('/api/admin/settings', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setCalculatorEnabled(data.calculatorEnabled !== undefined ? data.calculatorEnabled : true);
+        setCalculatorContent(data.calculatorContent || '');
+        setMandatoryTestsEnabled(data.mandatoryTestsEnabled !== undefined ? data.mandatoryTestsEnabled : true);
+        setOtherSectionEnabled(data.otherSectionEnabled !== undefined ? data.otherSectionEnabled : true);
+        setOtherSectionTitle(data.otherSectionTitle || '');
+        setOtherSectionContent(data.otherSectionContent || '');
+      }
+    } catch (err) {
+      console.error('Error fetching settings:', err);
+    }
+  };
+
+  const handleSaveSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSettingsLoading(true);
+    setSettingsSuccess('');
+    setSettingsError('');
+
+    try {
+      const response = await fetch('/api/admin/settings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${password}`
+        },
+        body: JSON.stringify({
+          calculatorEnabled,
+          calculatorContent,
+          mandatoryTestsEnabled,
+          otherSectionEnabled,
+          otherSectionTitle,
+          otherSectionContent
+        })
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setSettingsSuccess("Bot sozlamalari muvaffaqiyatli saqlandi!");
+      } else {
+        setSettingsError(data.error || "Saqlashda xatolik yuz berdi.");
+      }
+    } catch (err) {
+      setSettingsError("Tarmoq xatoligi yuz berdi.");
+    } finally {
+      setSettingsLoading(false);
     }
   };
 
@@ -94,6 +161,7 @@ export default function AdminPanel() {
         localStorage.setItem('admin_token', token);
         fetchUsers(token);
         fetchPdfTests(token);
+        fetchSettings(token);
       } else {
         setError('Noto\'g\'ri parol');
         setIsAuthenticated(false);
@@ -436,6 +504,163 @@ export default function AdminPanel() {
               </div>
             </div>
           </div>
+        </div>
+
+        {/* Bot Bo'limlari Sozlamalari */}
+        <div className="mt-8 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden p-6">
+          <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+            <Settings size={24} className="text-indigo-600" />
+            Bot Bo'limlari & Tugmalar Sozlamalari
+          </h2>
+          <p className="text-sm text-slate-500 mb-6 font-medium">
+            Ushbu bo'lim orqali Telegram bot pastki menyusidagi interaktiv tugmalar (Reply Keyboard) va unga bog'liq tarkibni boshqarishingiz mumkin.
+          </p>
+
+          <form onSubmit={handleSaveSettings} className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              
+              {/* Mandatory Tests Toggle */}
+              <div className="bg-slate-50 border border-slate-150 rounded-xl p-5 flex flex-col justify-between shadow-sm">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-bold text-slate-700 text-sm">📝 Testlar Bo'limi</span>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={mandatoryTestsEnabled}
+                        onChange={(e) => setMandatoryTestsEnabled(e.target.checked)}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                    </label>
+                  </div>
+                  <p className="text-xs text-slate-400 font-medium">
+                    Bot pastida "📝 Testlar Bo'limi" tugmasining ko'rinishini sozlaydi (onlayn va PDF testlar).
+                  </p>
+                </div>
+              </div>
+
+              {/* Calculator Toggle */}
+              <div className="bg-slate-50 border border-slate-150 rounded-xl p-5 flex flex-col justify-between shadow-sm">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-bold text-slate-700 text-sm">🧮 Kalkulyator</span>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={calculatorEnabled}
+                        onChange={(e) => setCalculatorEnabled(e.target.checked)}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                    </label>
+                  </div>
+                  <p className="text-xs text-slate-400 font-medium">
+                    Matematik hisob-kitoblar bajariladigan kalkulyator tugmasining ko'rinishini sozlaydi.
+                  </p>
+                </div>
+              </div>
+
+              {/* Other Section Toggle */}
+              <div className="bg-slate-50 border border-slate-150 rounded-xl p-5 flex flex-col justify-between shadow-sm">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-bold text-slate-700 text-sm">ℹ️ Boshqa Bo'lim</span>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={otherSectionEnabled}
+                        onChange={(e) => setOtherSectionEnabled(e.target.checked)}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                    </label>
+                  </div>
+                  <p className="text-xs text-slate-400 font-medium">
+                    Ma'lumot va yordamga bag'ishlangan uchinchi moslashtiriladigan tugmani yoqadi/o'chiradi.
+                  </p>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Editing fields for calculator and other section content */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
+              
+              {/* Calculator settings */}
+              {calculatorEnabled && (
+                <div className="bg-slate-50 border border-slate-150 rounded-xl p-5 space-y-3 shadow-sm">
+                  <h3 className="font-semibold text-sm text-slate-700">🧮 Kalkulyator so'zi & Yo'riqnomasi</h3>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                      Kalkulyator Kirish Matni
+                    </label>
+                    <textarea
+                      value={calculatorContent}
+                      onChange={(e) => setCalculatorContent(e.target.value)}
+                      rows={5}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-medium text-slate-700"
+                      placeholder="Kalkulyator bo'limiga kirilganda chiqadigan matn..."
+                      required={calculatorEnabled}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Other Section settings */}
+              {otherSectionEnabled && (
+                <div className="bg-slate-50 border border-slate-150 rounded-xl p-5 space-y-3 shadow-sm">
+                  <h3 className="font-semibold text-sm text-slate-700">ℹ️ "Boshqa bo'lim" nomi & tarkibi</h3>
+                  
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                      Tugma Sarlavhasi (Maks 30 ta harf)
+                    </label>
+                    <input
+                      type="text"
+                      value={otherSectionTitle}
+                      onChange={(e) => setOtherSectionTitle(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-medium text-slate-700"
+                      placeholder="Ma'lumot va Qoidalar"
+                      required={otherSectionEnabled}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                      Bo'lim tarkibi (Matn yoki Qo'llanma)
+                    </label>
+                    <textarea
+                      value={otherSectionContent}
+                      onChange={(e) => setOtherSectionContent(e.target.value)}
+                      rows={3}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-medium text-slate-700"
+                      placeholder="Qoidalar, ko'rsatmalar yoki boshqa ma'lumotlar..."
+                      required={otherSectionEnabled}
+                    />
+                  </div>
+                </div>
+              )}
+
+            </div>
+
+            {/* Alert boxes */}
+            {settingsError && <p className="text-red-500 text-xs font-semibold">{settingsError}</p>}
+            {settingsSuccess && <p className="text-emerald-600 text-xs font-semibold">{settingsSuccess}</p>}
+
+            {/* Submission buttons */}
+            <div className="flex justify-end pt-2">
+              <button
+                type="submit"
+                disabled={settingsLoading}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 px-6 rounded-lg text-sm transition-colors disabled:opacity-70 flex items-center gap-1.5"
+              >
+                {settingsLoading ? 'Saqlanmoqda...' : 'O\'zgarishlarni Saqlash'}
+                {!settingsLoading && <CheckCircle2 size={16} />}
+              </button>
+            </div>
+
+          </form>
         </div>
 
         <div className="mt-8 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">

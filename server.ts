@@ -57,6 +57,7 @@ export interface PdfSession {
 }
 
 const pdfSessions = new Map<number, PdfSession>();
+const userStates = new Map<number, string>(); // tracks user states, e.g., 'calculator'
 let pdfTestsInMemory: PdfTest[] = [];
 
 function parseAnswerKey(text: string): string {
@@ -132,6 +133,31 @@ async function removePdfTest(id: string): Promise<boolean> {
   return true;
 }
 
+function evaluateMathExpression(expr: string): string {
+  const cleanExpr = expr.trim();
+  const mathCharsOnly = cleanExpr.replace(/\s+/g, '');
+  if (!/^[0-9+\-*/().^xX÷]+$/.test(mathCharsOnly)) {
+    return "❌ Noto'g'ri ifoda! Faqat sonlar va +, -, *, /, (, ), ^ amallari ruxsat etiladi.";
+  }
+  
+  let formatted = mathCharsOnly
+    .replace(/x|X/g, '*')
+    .replace(/÷/g, '/')
+    .replace(/\^/g, '**');
+
+  try {
+    const result = new Function(`return (${formatted})`)();
+    if (typeof result === 'number' && !isNaN(result) && isFinite(result)) {
+      const formattedResult = Number.isInteger(result) ? result.toString() : result.toFixed(4);
+      return `🧮 **Hisob-kitob natijasi:**\n\n\`${cleanExpr} = ${formattedResult}\``;
+    } else {
+      return "❌ Hisoblashda xatolik yuz berdi.";
+    }
+  } catch (err) {
+    return "❌ Matematik ifoda noto'g'ri shakllantirilgan.";
+  }
+}
+
 interface UserData {
   timestamp: number;
   firstName?: string;
@@ -145,7 +171,38 @@ interface UserData {
 // Global settings stored persistently
 let globalSettings = {
   channelUsername: '@dilmurodbekmatematika',
-  channels: ['@dilmurodbekmatematika']
+  channels: ['@dilmurodbekmatematika'],
+  calculatorEnabled: true,
+  calculatorContent: "🧮 **Matematik Kalkulyator!**\n\nIltimos, hisoblamoqchi bo'lgan matematik ifodangizni kiritib yuboring.\n\nMasalan:\n🔹 `(15 + 25) * 3`\n🔹 `144 / 12`\n🔹 `5^2` (daraja)\n🔹 `100 - 30 ÷ 5`",
+  mandatoryTestsEnabled: true,
+  otherSectionEnabled: true,
+  otherSectionTitle: "ℹ️ Ma'lumot va Qoidalar",
+  otherSectionContent: "📝 **Botdan foydalanish qoidalari va yordam:**\n\n1. Har bir testni diqqat bilan yeching.\n2. Natijalar avtomatik ravishda saqlanadi.\n3. Har bir savol uchun belgilangan vaqt cheklanmagan."
+};
+
+const getMainMenuKeyboard = () => {
+  const buttons: any[][] = [];
+  const row1: any[] = [];
+  
+  if (globalSettings.mandatoryTestsEnabled !== false) {
+    row1.push("📝 Testlar Bo'limi");
+  }
+  if (globalSettings.calculatorEnabled !== false) {
+    row1.push("🧮 Kalkulyator");
+  }
+  if (row1.length > 0) {
+    buttons.push(row1);
+  }
+
+  const row2: any[] = [];
+  if (globalSettings.otherSectionEnabled !== false) {
+    row2.push(globalSettings.otherSectionTitle || "ℹ️ Ma'lumot va Qoidalar");
+  }
+  if (row2.length > 0) {
+    buttons.push(row2);
+  }
+  
+  return Markup.keyboard(buttons).resize();
 };
 
 async function loadSettings() {
@@ -163,6 +220,14 @@ async function loadSettings() {
           } else if (data.channelUsername) {
             globalSettings.channels = [data.channelUsername];
           }
+          
+          globalSettings.calculatorEnabled = data.calculatorEnabled !== undefined ? !!data.calculatorEnabled : true;
+          globalSettings.calculatorContent = data.calculatorContent || globalSettings.calculatorContent;
+          globalSettings.mandatoryTestsEnabled = data.mandatoryTestsEnabled !== undefined ? !!data.mandatoryTestsEnabled : true;
+          globalSettings.otherSectionEnabled = data.otherSectionEnabled !== undefined ? !!data.otherSectionEnabled : true;
+          globalSettings.otherSectionTitle = data.otherSectionTitle || "ℹ️ Ma'lumot va Qoidalar";
+          globalSettings.otherSectionContent = data.otherSectionContent || globalSettings.otherSectionContent;
+
           console.log("Global settings loaded from Firebase:", globalSettings);
         }
       } else {
@@ -440,6 +505,61 @@ async function startServer() {
     console.log(`Broadcast finished. Success: ${successCount}, Failed: ${failCount}`);
   });
 
+  // Admin-specific custom sections settings
+  app.get('/api/admin/settings', async (req, res) => {
+    const authHeader = req.headers.authorization;
+    const adminPassword = process.env.ADMIN_PASSWORD || '1';
+    
+    if (!authHeader || authHeader !== `Bearer ${adminPassword}`) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    res.json(globalSettings);
+  });
+
+  app.post('/api/admin/settings', async (req, res) => {
+    const authHeader = req.headers.authorization;
+    const adminPassword = process.env.ADMIN_PASSWORD || '1';
+    
+    if (!authHeader || authHeader !== `Bearer ${adminPassword}`) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    try {
+      const { 
+        channels,
+        calculatorEnabled, 
+        calculatorContent, 
+        mandatoryTestsEnabled, 
+        otherSectionEnabled, 
+        otherSectionTitle, 
+        otherSectionContent 
+      } = req.body;
+
+      if (Array.isArray(channels)) {
+        globalSettings.channels = channels;
+        if (channels.length > 0) {
+          globalSettings.channelUsername = channels[0];
+        }
+      }
+
+      if (calculatorEnabled !== undefined) globalSettings.calculatorEnabled = !!calculatorEnabled;
+      if (calculatorContent !== undefined) globalSettings.calculatorContent = calculatorContent;
+      if (mandatoryTestsEnabled !== undefined) globalSettings.mandatoryTestsEnabled = !!mandatoryTestsEnabled;
+      if (otherSectionEnabled !== undefined) globalSettings.otherSectionEnabled = !!otherSectionEnabled;
+      if (otherSectionTitle !== undefined) globalSettings.otherSectionTitle = otherSectionTitle;
+      if (otherSectionContent !== undefined) globalSettings.otherSectionContent = otherSectionContent;
+
+      if (db) {
+        await setDoc(doc(db, 'settings', 'config'), globalSettings, { merge: true });
+      }
+      
+      res.json({ success: true, settings: globalSettings });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Xatolik yuz berdi' });
+    }
+  });
+
   // PDF Tests APIs
   app.get('/api/pdf-tests', async (req, res) => {
     try {
@@ -678,6 +798,45 @@ async function startServer() {
         const userId = ctx.from?.id;
         if (!userId) return next();
 
+        const msgText = ctx.message.text ? ctx.message.text.trim() : "";
+        
+        // Handle bottom menu button triggers (unless it's an command starting with '/')
+        if (msgText === "📝 Testlar Bo'limi") {
+          userStates.delete(userId);
+          const isSubscribed = await checkSubscription(ctx);
+          if (!isSubscribed) {
+            return sendSubscriptionPrompt(ctx);
+          }
+          const buttons = [
+            [Markup.button.callback("🏛 Online Testlar", "choose_online_tests")],
+            [Markup.button.callback("📂 PDF Testlar", "choose_pdf_tests")]
+          ];
+          return ctx.reply("🏛 Testlar Bo'limiga xush kelibsiz! Qaysi test turidan foydalanmoqchisiz?", Markup.inlineKeyboard(buttons));
+        }
+
+        if (msgText === "🧮 Kalkulyator") {
+          userStates.set(userId, 'calculator');
+          return ctx.reply(globalSettings.calculatorContent, { parse_mode: 'Markdown' });
+        }
+
+        if (msgText === (globalSettings.otherSectionTitle || "ℹ️ Ma'lumot va Qoidalar")) {
+          userStates.delete(userId);
+          return ctx.reply(globalSettings.otherSectionContent || '', { parse_mode: 'Markdown' });
+        }
+
+        if (msgText.startsWith('/')) {
+          return next();
+        }
+
+        // If user is in calculator state and typing a math expression
+        if (userStates.get(userId) === 'calculator') {
+          const hasMathChars = /^[0-9+\-*/().^xX÷\s]+$/.test(msgText);
+          if (hasMathChars) {
+            const evaluation = evaluateMathExpression(msgText);
+            return ctx.reply(evaluation, { parse_mode: 'Markdown' });
+          }
+        }
+
         // PDF Test Text Submission interceptor
         const chatId = ctx.chat?.id;
         if (chatId && pdfSessions.has(chatId)) {
@@ -888,12 +1047,14 @@ async function startServer() {
       });
 
       bot.start(async (ctx) => {
+        await ctx.reply("👋 Matematika test botimizga xush kelibsiz!", getMainMenuKeyboard());
+        
         const buttons = [
           [Markup.button.callback("🏛 Online Testlar", "choose_online_tests")],
           [Markup.button.callback("📂 PDF Testlar", "choose_pdf_tests")]
         ];
         ctx.reply(
-          "Salom! Men Matematika testlarini o'tkazuvchi botman.\n\nIltimos, quyidagi test turidan birini tanlang:",
+          "Iltimos, quyidagi test turidan birini tanlang:",
           Markup.inlineKeyboard(buttons)
         );
       });
@@ -931,6 +1092,8 @@ async function startServer() {
         if (!isSubscribed) {
           return sendSubscriptionPrompt(ctx);
         }
+
+        await ctx.reply("🏛 Testlar menyusi:", getMainMenuKeyboard());
 
         const buttons = [
           [Markup.button.callback("🏛 Online Testlar", "choose_online_tests")],
@@ -995,12 +1158,13 @@ async function startServer() {
         const isSubscribed = await checkSubscription(ctx);
         if (isSubscribed) {
           await ctx.deleteMessage().catch(() => {});
+          await ctx.reply("Rahmat! Obuna tasdiqlandi.", getMainMenuKeyboard());
           const buttons = [
             [Markup.button.callback("🏛 Online Testlar", "choose_online_tests")],
             [Markup.button.callback("📂 PDF Testlar", "choose_pdf_tests")]
           ];
           ctx.reply(
-            "Rahmat! Obuna tasdiqlandi.\n\nIltimos, quyidagi test turidan birini tanlang:",
+            "Iltimos, quyidagi test turidan birini tanlang:",
             Markup.inlineKeyboard(buttons)
           );
         } else {
