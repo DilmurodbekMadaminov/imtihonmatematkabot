@@ -133,31 +133,6 @@ async function removePdfTest(id: string): Promise<boolean> {
   return true;
 }
 
-function evaluateMathExpression(expr: string): string {
-  const cleanExpr = expr.trim();
-  const mathCharsOnly = cleanExpr.replace(/\s+/g, '');
-  if (!/^[0-9+\-*/().^xX÷]+$/.test(mathCharsOnly)) {
-    return "❌ Noto'g'ri ifoda! Faqat sonlar va +, -, *, /, (, ), ^ amallari ruxsat etiladi.";
-  }
-  
-  let formatted = mathCharsOnly
-    .replace(/x|X/g, '*')
-    .replace(/÷/g, '/')
-    .replace(/\^/g, '**');
-
-  try {
-    const result = new Function(`return (${formatted})`)();
-    if (typeof result === 'number' && !isNaN(result) && isFinite(result)) {
-      const formattedResult = Number.isInteger(result) ? result.toString() : result.toFixed(4);
-      return `🧮 **Hisob-kitob natijasi:**\n\n\`${cleanExpr} = ${formattedResult}\``;
-    } else {
-      return "❌ Hisoblashda xatolik yuz berdi.";
-    }
-  } catch (err) {
-    return "❌ Matematik ifoda noto'g'ri shakllantirilgan.";
-  }
-}
-
 interface UserData {
   timestamp: number;
   firstName?: string;
@@ -172,8 +147,6 @@ interface UserData {
 let globalSettings = {
   channelUsername: '@dilmurodbekmatematika',
   channels: ['@dilmurodbekmatematika'],
-  calculatorEnabled: true,
-  calculatorContent: "🧮 **Matematik Kalkulyator!**\n\nIltimos, hisoblamoqchi bo'lgan matematik ifodangizni kiritib yuboring.\n\nMasalan:\n🔹 `(15 + 25) * 3`\n🔹 `144 / 12`\n🔹 `5^2` (daraja)\n🔹 `100 - 30 ÷ 5`",
   mandatoryTestsEnabled: true,
   otherSectionEnabled: true,
   otherSectionTitle: "ℹ️ Ma'lumot va Qoidalar",
@@ -186,9 +159,6 @@ const getMainMenuKeyboard = () => {
   
   if (globalSettings.mandatoryTestsEnabled !== false) {
     row1.push("📝 Testlar Bo'limi");
-  }
-  if (globalSettings.calculatorEnabled !== false) {
-    row1.push("🧮 Kalkulyator");
   }
   if (row1.length > 0) {
     buttons.push(row1);
@@ -221,8 +191,6 @@ async function loadSettings() {
             globalSettings.channels = [data.channelUsername];
           }
           
-          globalSettings.calculatorEnabled = data.calculatorEnabled !== undefined ? !!data.calculatorEnabled : true;
-          globalSettings.calculatorContent = data.calculatorContent || globalSettings.calculatorContent;
           globalSettings.mandatoryTestsEnabled = data.mandatoryTestsEnabled !== undefined ? !!data.mandatoryTestsEnabled : true;
           globalSettings.otherSectionEnabled = data.otherSectionEnabled !== undefined ? !!data.otherSectionEnabled : true;
           globalSettings.otherSectionTitle = data.otherSectionTitle || "ℹ️ Ma'lumot va Qoidalar";
@@ -528,8 +496,6 @@ async function startServer() {
     try {
       const { 
         channels,
-        calculatorEnabled, 
-        calculatorContent, 
         mandatoryTestsEnabled, 
         otherSectionEnabled, 
         otherSectionTitle, 
@@ -543,8 +509,6 @@ async function startServer() {
         }
       }
 
-      if (calculatorEnabled !== undefined) globalSettings.calculatorEnabled = !!calculatorEnabled;
-      if (calculatorContent !== undefined) globalSettings.calculatorContent = calculatorContent;
       if (mandatoryTestsEnabled !== undefined) globalSettings.mandatoryTestsEnabled = !!mandatoryTestsEnabled;
       if (otherSectionEnabled !== undefined) globalSettings.otherSectionEnabled = !!otherSectionEnabled;
       if (otherSectionTitle !== undefined) globalSettings.otherSectionTitle = otherSectionTitle;
@@ -814,11 +778,6 @@ async function startServer() {
           return ctx.reply("🏛 Testlar Bo'limiga xush kelibsiz! Qaysi test turidan foydalanmoqchisiz?", Markup.inlineKeyboard(buttons));
         }
 
-        if (msgText === "🧮 Kalkulyator") {
-          userStates.set(userId, 'calculator');
-          return ctx.reply(globalSettings.calculatorContent, { parse_mode: 'Markdown' });
-        }
-
         if (msgText === (globalSettings.otherSectionTitle || "ℹ️ Ma'lumot va Qoidalar")) {
           userStates.delete(userId);
           return ctx.reply(globalSettings.otherSectionContent || '', { parse_mode: 'Markdown' });
@@ -826,15 +785,6 @@ async function startServer() {
 
         if (msgText.startsWith('/')) {
           return next();
-        }
-
-        // If user is in calculator state and typing a math expression
-        if (userStates.get(userId) === 'calculator') {
-          const hasMathChars = /^[0-9+\-*/().^xX÷\s]+$/.test(msgText);
-          if (hasMathChars) {
-            const evaluation = evaluateMathExpression(msgText);
-            return ctx.reply(evaluation, { parse_mode: 'Markdown' });
-          }
         }
 
         // PDF Test Text Submission interceptor

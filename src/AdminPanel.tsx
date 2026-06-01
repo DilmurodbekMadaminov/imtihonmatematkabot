@@ -41,8 +41,6 @@ export default function AdminPanel() {
   const [uploadingTest, setUploadingTest] = useState(false);
 
   // Bot sections settings state
-  const [calculatorEnabled, setCalculatorEnabled] = useState(true);
-  const [calculatorContent, setCalculatorContent] = useState('');
   const [mandatoryTestsEnabled, setMandatoryTestsEnabled] = useState(true);
   const [otherSectionEnabled, setOtherSectionEnabled] = useState(true);
   const [otherSectionTitle, setOtherSectionTitle] = useState('');
@@ -81,8 +79,6 @@ export default function AdminPanel() {
       });
       if (response.ok) {
         const data = await response.json();
-        setCalculatorEnabled(data.calculatorEnabled !== undefined ? data.calculatorEnabled : true);
-        setCalculatorContent(data.calculatorContent || '');
         setMandatoryTestsEnabled(data.mandatoryTestsEnabled !== undefined ? data.mandatoryTestsEnabled : true);
         setOtherSectionEnabled(data.otherSectionEnabled !== undefined ? data.otherSectionEnabled : true);
         setOtherSectionTitle(data.otherSectionTitle || '');
@@ -107,8 +103,6 @@ export default function AdminPanel() {
           'Authorization': `Bearer ${password}`
         },
         body: JSON.stringify({
-          calculatorEnabled,
-          calculatorContent,
           mandatoryTestsEnabled,
           otherSectionEnabled,
           otherSectionTitle,
@@ -517,7 +511,7 @@ export default function AdminPanel() {
           </p>
 
           <form onSubmit={handleSaveSettings} className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 font-sans">
               
               {/* Mandatory Tests Toggle */}
               <div className="bg-slate-50 border border-slate-150 rounded-xl p-5 flex flex-col justify-between shadow-sm">
@@ -534,29 +528,8 @@ export default function AdminPanel() {
                       <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
                     </label>
                   </div>
-                  <p className="text-xs text-slate-400 font-medium">
+                  <p className="text-xs text-slate-400 font-medium font-sans">
                     Bot pastida "📝 Testlar Bo'limi" tugmasining ko'rinishini sozlaydi (onlayn va PDF testlar).
-                  </p>
-                </div>
-              </div>
-
-              {/* Calculator Toggle */}
-              <div className="bg-slate-50 border border-slate-150 rounded-xl p-5 flex flex-col justify-between shadow-sm">
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-bold text-slate-700 text-sm">🧮 Kalkulyator</span>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={calculatorEnabled}
-                        onChange={(e) => setCalculatorEnabled(e.target.checked)}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                    </label>
-                  </div>
-                  <p className="text-xs text-slate-400 font-medium">
-                    Matematik hisob-kitoblar bajariladigan kalkulyator tugmasining ko'rinishini sozlaydi.
                   </p>
                 </div>
               </div>
@@ -576,7 +549,7 @@ export default function AdminPanel() {
                       <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
                     </label>
                   </div>
-                  <p className="text-xs text-slate-400 font-medium">
+                  <p className="text-xs text-slate-400 font-medium font-sans">
                     Ma'lumot va yordamga bag'ishlangan uchinchi moslashtiriladigan tugmani yoqadi/o'chiradi.
                   </p>
                 </div>
@@ -584,32 +557,12 @@ export default function AdminPanel() {
 
             </div>
 
-            {/* Editing fields for calculator and other section content */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
-              
-              {/* Calculator settings */}
-              {calculatorEnabled && (
-                <div className="bg-slate-50 border border-slate-150 rounded-xl p-5 space-y-3 shadow-sm">
-                  <h3 className="font-semibold text-sm text-slate-700">🧮 Kalkulyator so'zi & Yo'riqnomasi</h3>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                      Kalkulyator Kirish Matni
-                    </label>
-                    <textarea
-                      value={calculatorContent}
-                      onChange={(e) => setCalculatorContent(e.target.value)}
-                      rows={5}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-medium text-slate-700"
-                      placeholder="Kalkulyator bo'limiga kirilganda chiqadigan matn..."
-                      required={calculatorEnabled}
-                    />
-                  </div>
-                </div>
-              )}
+            {/* Editing fields for other section content */}
+            <div className="grid grid-cols-1 gap-6 mt-4">
 
               {/* Other Section settings */}
               {otherSectionEnabled && (
-                <div className="bg-slate-50 border border-slate-150 rounded-xl p-5 space-y-3 shadow-sm">
+                <div className="bg-slate-50 border border-slate-150 rounded-xl p-5 space-y-3 shadow-sm font-sans">
                   <h3 className="font-semibold text-sm text-slate-700">ℹ️ "Boshqa bo'lim" nomi & tarkibi</h3>
                   
                   <div>
