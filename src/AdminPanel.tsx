@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Lock, LogOut, Activity, Send, CheckCircle2 } from 'lucide-react';
+import { Users, Lock, LogOut, Activity, Send, CheckCircle2, FileText, FileUp, Trash2, Plus } from 'lucide-react';
 
 interface UserData {
   id: number;
@@ -9,6 +9,15 @@ interface UserData {
   username?: string;
   testsTaken?: number;
   averageScore?: number;
+}
+
+interface PdfTest {
+  id: string;
+  title: string;
+  pdfUrl: string;
+  answers: string;
+  questionsCount: number;
+  createdAt: number;
 }
 
 export default function AdminPanel() {
@@ -22,13 +31,35 @@ export default function AdminPanel() {
   const [broadcasting, setBroadcasting] = useState(false);
   const [broadcastStatus, setBroadcastStatus] = useState('');
 
+  // PDF Tests state
+  const [pdfTests, setPdfTests] = useState<PdfTest[]>([]);
+  const [pdfTitle, setPdfTitle] = useState('');
+  const [pdfAnswers, setPdfAnswers] = useState('');
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [uploadError, setUploadError] = useState('');
+  const [uploadSuccess, setUploadSuccess] = useState('');
+  const [uploadingTest, setUploadingTest] = useState(false);
+
   useEffect(() => {
     const savedToken = localStorage.getItem('admin_token');
     if (savedToken) {
       setPassword(savedToken);
       fetchStats(savedToken);
+      fetchPdfTests(savedToken);
     }
   }, []);
+
+  const fetchPdfTests = async (token: string) => {
+    try {
+      const response = await fetch('/api/pdf-tests');
+      if (response.ok) {
+        const data = await response.json();
+        setPdfTests(data);
+      }
+    } catch (err) {
+      console.error('Error fetching pdf tests:', err);
+    }
+  };
 
   const fetchUsers = async (token: string) => {
     try {
@@ -62,6 +93,7 @@ export default function AdminPanel() {
         setIsAuthenticated(true);
         localStorage.setItem('admin_token', token);
         fetchUsers(token);
+        fetchPdfTests(token);
       } else {
         setError('Noto\'g\'ri parol');
         setIsAuthenticated(false);
@@ -114,6 +146,69 @@ export default function AdminPanel() {
       setBroadcastStatus('Xatolik yuz berdi');
     } finally {
       setBroadcasting(false);
+    }
+  };
+
+  const handleDeletePdfTest = async (id: string) => {
+    if (!window.confirm("Haqiqatan ham ushbu PDF testni o'chirib tashlamoqchimisiz?")) return;
+    try {
+      const response = await fetch(`/api/admin/pdf-tests/${id}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${password}`
+        }
+      });
+      if (response.ok) {
+        setPdfTests(prev => prev.filter(t => t.id !== id));
+      } else {
+        alert("O'chirishda xatolik yuz berdi");
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleUploadPdfTest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pdfTitle.trim() || !pdfAnswers.trim() || !pdfFile) {
+      setUploadError("Barcha maydonlar va PDF fayli majburiy!");
+      return;
+    }
+
+    setUploadingTest(true);
+    setUploadError('');
+    setUploadSuccess('');
+
+    const formData = new FormData();
+    formData.append('title', pdfTitle);
+    formData.append('answers', pdfAnswers);
+    formData.append('pdf', pdfFile);
+
+    try {
+      const response = await fetch('/api/admin/pdf-tests', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${password}`
+        },
+        body: formData
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        setUploadSuccess("PDF test muvaffaqiyatli yuklandi!");
+        setPdfTitle('');
+        setPdfAnswers('');
+        setPdfFile(null);
+        const fileInput = document.getElementById('pdf-file-input') as HTMLInputElement;
+        if (fileInput) fileInput.value = '';
+        fetchPdfTests(password);
+      } else {
+        setUploadError(data.error || "Muvaffaqiyatsiz yuklash.");
+      }
+    } catch (err) {
+      setUploadError("Tarmoq xatoligi yuz berdi.");
+    } finally {
+      setUploadingTest(false);
     }
   };
 
@@ -229,6 +324,118 @@ export default function AdminPanel() {
               )}
             </div>
           </form>
+        </div>
+
+        {/* PDF Testlar Tizimi (New Feature!) */}
+        <div className="mt-8 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden p-6">
+          <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+            <FileText size={24} className="text-indigo-600" />
+            PDF Testlar Boshqaruvi
+          </h2>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            {/* Upload form */}
+            <div className="bg-slate-50 rounded-xl p-5 border border-slate-100">
+              <h3 className="font-semibold text-slate-700 mb-4 flex items-center gap-1">
+                <FileUp size={18} className="text-slate-500" />
+                Yangi test yuklash
+              </h3>
+              
+              <form onSubmit={handleUploadPdfTest} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1">
+                    Test Sarlavhasi
+                  </label>
+                  <input
+                    type="text"
+                    value={pdfTitle}
+                    onChange={(e) => setPdfTitle(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none text-sm transition-all bg-white"
+                    placeholder="Masalan: Fizika xonadoni 1-birlik"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1">
+                    To'g'ri Javoblar Kaliti
+                  </label>
+                  <input
+                    type="text"
+                    value={pdfAnswers}
+                    onChange={(e) => setPdfAnswers(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none text-sm transition-all font-mono bg-white"
+                    placeholder="Masalan: abcdabcd yoki 1a2b3c4d"
+                    required
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Uzunlik cheklanmagan. Harflar avtomatik tozalanadi va tartiblanadi.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1">
+                    PDF Fayli (.pdf)
+                  </label>
+                  <input
+                    id="pdf-file-input"
+                    type="file"
+                    accept=".pdf"
+                    onChange={(e) => setPdfFile(e.target.files?.[0] || null)}
+                    className="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
+                    required
+                  />
+                </div>
+
+                {uploadError && <p className="text-red-500 text-xs font-medium">{uploadError}</p>}
+                {uploadSuccess && <p className="text-emerald-600 text-xs font-semibold">{uploadSuccess}</p>}
+
+                <button
+                  type="submit"
+                  disabled={uploadingTest}
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold py-2.5 px-4 rounded-lg transition-colors disabled:opacity-75 flex items-center justify-center gap-1.5"
+                >
+                  {uploadingTest ? 'Yuklanmoqda...' : 'Faylni Tasdiqlash'}
+                  {!uploadingTest && <Plus size={16} />}
+                </button>
+              </form>
+            </div>
+
+            {/* List of uploaded PDF tests */}
+            <div className="flex flex-col">
+              <h3 className="font-semibold text-slate-700 mb-4">Yuklangan PDF Testlar ({pdfTests.length})</h3>
+              
+              <div className="flex-1 overflow-y-auto max-h-[300px] border border-slate-200 rounded-xl bg-slate-50 divide-y divide-slate-100">
+                {pdfTests.map((t) => (
+                  <div key={t.id} className="p-3.5 flex items-center justify-between hover:bg-slate-100/50 transition-colors">
+                    <div className="min-w-0 flex-1 pr-3">
+                      <p className="text-sm font-semibold text-slate-700 truncate">{t.title}</p>
+                      <div className="flex items-center gap-2 text-xs text-slate-400 font-medium whitespace-nowrap overflow-hidden mt-0.5">
+                        <span className="bg-white border border-slate-200 text-slate-500 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold">
+                          {t.questionsCount} TA SAVOL
+                        </span>
+                        <span className="truncate">
+                          Kalit: {t.answers.toUpperCase()}
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleDeletePdfTest(t.id)}
+                      className="text-slate-400 hover:text-red-500 p-1.5 rounded-lg transition-colors hover:bg-white"
+                      title="Testni o'chirish"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ))}
+                {pdfTests.length === 0 && (
+                  <div className="h-full min-h-[160px] flex items-center justify-center p-8 text-slate-400 text-sm italic">
+                    Hozircha PDF testlar yuklanmagan
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
 
         <div className="mt-8 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
