@@ -2,17 +2,12 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import { Telegraf, Markup } from "telegraf";
 import path from "path";
-import { fileURLToPath } from "url";
 import fs from "fs";
 import { variants } from "./src/questions.js";
 import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, setDoc, getDocs, collection, query, where, Timestamp } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, getDoc, getDocs, collection, query, where, Timestamp } from 'firebase/firestore';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Firebase configuration
-const firebaseConfigPath = path.join(__dirname, 'firebase-applet-config.json');
+const firebaseConfigPath = path.join(process.cwd(), 'firebase-applet-config.json');
 let db: any = null;
 
 try {
@@ -35,6 +30,57 @@ interface UserData {
   username?: string;
   testsTaken?: number;
   averageScore?: number;
+  isAdmin?: boolean;
+}
+
+// Global settings stored persistently
+let globalSettings = {
+  channelUsername: '@dilmurodbekmatematika',
+  channels: ['@dilmurodbekmatematika']
+};
+
+async function loadSettings() {
+  if (db) {
+    try {
+      const settingsDoc = await getDoc(doc(db, 'settings', 'config'));
+      if (settingsDoc.exists()) {
+        const data = settingsDoc.data();
+        if (data) {
+          if (data.channelUsername) {
+            globalSettings.channelUsername = data.channelUsername;
+          }
+          if (Array.isArray(data.channels)) {
+            globalSettings.channels = data.channels;
+          } else if (data.channelUsername) {
+            globalSettings.channels = [data.channelUsername];
+          }
+          console.log("Global settings loaded from Firebase:", globalSettings);
+        }
+      } else {
+        await setDoc(doc(db, 'settings', 'config'), globalSettings);
+        console.log("Default settings stored to Firebase.");
+      }
+    } catch (e) {
+      console.error("Error loading settings from Firestore:", e);
+    }
+  }
+}
+
+async function saveSettings(channels: string[]) {
+  globalSettings.channels = channels;
+  if (channels.length > 0) {
+    globalSettings.channelUsername = channels[0];
+  }
+  if (db) {
+    try {
+      await setDoc(doc(db, 'settings', 'config'), { 
+        channels, 
+        channelUsername: channels.length > 0 ? channels[0] : '' 
+      }, { merge: true });
+    } catch (e) {
+      console.error("Error saving settings to Firestore:", e);
+    }
+  }
 }
 
 // Fallback in-memory map if Firebase fails
@@ -49,7 +95,8 @@ async function trackUser(user: { id: number; first_name?: string; last_name?: st
     lastName: user.last_name,
     username: user.username,
     testsTaken: existing.testsTaken || 0,
-    averageScore: existing.averageScore || 0
+    averageScore: existing.averageScore || 0,
+    isAdmin: existing.isAdmin || false
   };
   
   userActivity.set(user.id, data);
@@ -59,6 +106,53 @@ async function trackUser(user: { id: number; first_name?: string; last_name?: st
       await setDoc(doc(db, 'users', user.id.toString()), data, { merge: true });
     } catch (e) {
       console.error('Error saving user to Firestore:', e);
+    }
+  }
+}
+
+async function checkIfAdmin(userId: number): Promise<boolean> {
+  const localUser = userActivity.get(userId);
+  if (localUser && localUser.isAdmin) return true;
+  
+  if (db) {
+    try {
+      const userDoc = await getDoc(doc(db, 'users', userId.toString()));
+      if (userDoc.exists()) {
+        const uData = userDoc.data();
+        if (uData?.isAdmin) {
+          if (localUser) {
+            localUser.isAdmin = true;
+          } else {
+            userActivity.set(userId, {
+              timestamp: uData.timestamp || Date.now(),
+              firstName: uData.firstName,
+              lastName: uData.lastName,
+              username: uData.username,
+              testsTaken: uData.testsTaken || 0,
+              averageScore: uData.averageScore || 0,
+              isAdmin: true
+            });
+          }
+          return true;
+        }
+      }
+    } catch (e) {
+      console.error('Error checking admin status in Firestore:', e);
+    }
+  }
+  return false;
+}
+
+async function setAdminStatus(userId: number, isAdmin: boolean) {
+  const localUser = userActivity.get(userId) || { timestamp: Date.now() } as UserData;
+  localUser.isAdmin = isAdmin;
+  userActivity.set(userId, localUser);
+
+  if (db) {
+    try {
+      await setDoc(doc(db, 'users', userId.toString()), { isAdmin }, { merge: true });
+    } catch (e) {
+      console.error('Error saving admin status to Firestore:', e);
     }
   }
 }
@@ -151,6 +245,21 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  // Load configuration and prime the local cache on startup
+  await loadSettings();
+  if (db) {
+    try {
+      const snapshot = await getDocs(collection(db, 'users'));
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data() as UserData;
+        userActivity.set(Number(docSnap.id), data);
+      });
+      console.log(`Successfully primed cache with ${userActivity.size} users.`);
+    } catch (e) {
+      console.error("Error priming users cache on startup:", e);
+    }
+  }
+
   app.use(express.json());
 
   app.get('/api/admin/stats', async (req, res) => {
@@ -227,47 +336,63 @@ async function startServer() {
         return next();
       });
 
-      const adminChatIds = new Set<number>();
+      const getAdminKeyboard = () => {
+        const appUrl = process.env.VITE_APP_URL || 'https://ais-dev-zwxesqr7uajqrp3m5f64nl-286796810075.asia-east1.run.app';
+        return Markup.inlineKeyboard([
+          [Markup.button.callback("📊 Statistika", "admin_stats"), Markup.button.callback("👥 Foydalanuvchilar", "admin_users")],
+          [Markup.button.callback("📢 E'lon yuborish", "admin_broadcast"), Markup.button.callback("⚙️ Kanalni sozlash", "admin_channel")],
+          [Markup.button.webApp("🌐 Web Admin Panel", `${appUrl}/admin`)],
+          [Markup.button.callback("❓ Yordam", "admin_help"), Markup.button.callback("🚪 Chiqish", "admin_logout")]
+        ]);
+      };
+
+      interface AdminSession {
+        action: 'waiting_for_broadcast' | 'waiting_for_channel';
+      }
+      const adminSessions = new Map<number, AdminSession>();
 
       bot.command('admin', async (ctx) => {
         const adminPassword = process.env.ADMIN_PASSWORD || '1';
         const args = ctx.message.text.split(' ');
-        
-        const appUrl = process.env.VITE_APP_URL || 'https://ais-dev-zwxesqr7uajqrp3m5f64nl-286796810075.asia-east1.run.app';
-        const adminKeyboard = Markup.inlineKeyboard([
-          [Markup.button.webApp("🌐 Web Admin Panelni ochish", `${appUrl}/admin`)]
-        ]);
-        
+        const userId = ctx.from.id;
+
+        const isUserAdmin = await checkIfAdmin(userId);
+
         if (args.length > 1 && args[1] === adminPassword) {
-          adminChatIds.add(ctx.from.id);
-          ctx.reply('✅ Admin panelga xush kelibsiz! Quyidagi buyruqlardan foydalanishingiz yoki Web panelni ochishingiz mumkin:\n\n/stats - Statistika\n/users - Foydalanuvchilar ro\'yxati\n/broadcast <xabar> - Barchaga xabar yuborish', adminKeyboard);
-        } else if (adminChatIds.has(ctx.from.id)) {
-          ctx.reply('✅ Siz admin panelidasiz. Quyidagi buyruqlardan foydalanishingiz yoki Web panelni ochishingiz mumkin:\n\n/stats - Statistika\n/users - Foydalanuvchilar ro\'yxati\n/broadcast <xabar> - Barchaga xabar yuborish', adminKeyboard);
+          await setAdminStatus(userId, true);
+          return ctx.reply('✅ Admin panelga muvaffaqiyatli kirdingiz! Sizga admin huquqi doimiy berildi.\n\nQuyidagi tugmalardan foydalanib panelni boshqarishingiz mumkin:', getAdminKeyboard());
+        } else if (isUserAdmin) {
+          const total = await getTotalUsersCount();
+          const monthly = await getMonthlyUsersCount();
+          const channelsList = (globalSettings.channels && globalSettings.channels.length > 0)
+            ? globalSettings.channels.join(', ')
+            : globalSettings.channelUsername;
+          return ctx.reply(`🛠 Admin Boshqaruv Paneli:\n\n📢 Majburiy obuna kanallari: ${channelsList}\n👥 Jami foydalanuvchilar: ${total}\n📅 Oylik faol: ${monthly}\n\nQuyidagi tugmalar yordamida botni boshqaring:`, getAdminKeyboard());
         } else {
-          ctx.reply('Admin panelga kirish uchun parolni kiriting: /admin <parol>');
+          return ctx.reply('Sizda admin huquqlari yo\'q. Admin panelga kirish uchun parolni kiriting: \n`/admin <parol>`', { parse_mode: 'Markdown' });
         }
       });
 
       bot.command('stats', async (ctx) => {
-        if (!adminChatIds.has(ctx.from.id)) return;
+        if (!(await checkIfAdmin(ctx.from.id))) return;
         const total = await getTotalUsersCount();
         const monthly = await getMonthlyUsersCount();
         ctx.reply(`📊 Statistika:\n\n👥 Jami foydalanuvchilar: ${total}\n📅 Oylik faol foydalanuvchilar: ${monthly}`);
       });
 
       bot.command('users', async (ctx) => {
-        if (!adminChatIds.has(ctx.from.id)) return;
+        if (!(await checkIfAdmin(ctx.from.id))) return;
         const usersList = await getAllUsers();
         const topUsers = usersList.slice(0, 15);
         let msg = `👥 Oxirgi 15 ta foydalanuvchi (Jami: ${usersList.length}):\n\n`;
-        topUsers.forEach((u, i) => {
-          msg += `${i+1}. ${u.firstName || ''} ${u.lastName || ''} ${u.username ? '(@' + u.username + ')' : ''} - ${u.testsTaken || 0} test, ${u.averageScore || 0}%\n`;
+        topUsers.forEach((user: any, i: number) => {
+          msg += `${i+1}. ${user.firstName || ''} ${user.lastName || ''} ${user.username ? '(@' + user.username + ')' : ''} - ${user.testsTaken || 0} test, ${user.averageScore || 0}%\n`;
         });
         ctx.reply(msg);
       });
 
       bot.command('broadcast', async (ctx) => {
-        if (!adminChatIds.has(ctx.from.id)) return;
+        if (!(await checkIfAdmin(ctx.from.id))) return;
         const message = ctx.message.text.replace('/broadcast', '').trim();
         if (!message) {
           return ctx.reply('Xabar matnini kiriting: /broadcast <xabar>');
@@ -292,14 +417,161 @@ async function startServer() {
         ctx.reply(`✅ Xabar yuborish yakunlandi.\n\nYetkazildi: ${successCount}\nXatolik: ${failCount}`);
       });
 
-      const CHANNEL_USERNAME = '@dilmurodbekmatematika';
+      bot.action('admin_stats', async (ctx) => {
+        const userId = ctx.from?.id;
+        if (!userId || !(await checkIfAdmin(userId))) {
+          return ctx.answerCbQuery("Ruxsat berilmadi!", { show_alert: true });
+        }
+        const total = await getTotalUsersCount();
+        const monthly = await getMonthlyUsersCount();
+        const channelsList = (globalSettings.channels && globalSettings.channels.length > 0)
+          ? globalSettings.channels.join(', ')
+          : globalSettings.channelUsername;
+        const text = `📊 Tizim Statistikasi:\n\n📢 Majburiy obuna kanallari: ${channelsList}\n👥 Jami foydalanuvchilar: ${total} ta\n📅 Oylik faol foydalanuvchilar: ${monthly} ta\n\nYangilangan vaqti: ${new Date().toLocaleTimeString()}`;
+        await ctx.editMessageText(text, getAdminKeyboard()).catch(() => {});
+        await ctx.answerCbQuery();
+      });
+
+      bot.action('admin_users', async (ctx) => {
+        const userId = ctx.from?.id;
+        if (!userId || !(await checkIfAdmin(userId))) {
+          return ctx.answerCbQuery("Ruxsat berilmadi!", { show_alert: true });
+        }
+        const usersList = await getAllUsers();
+        const topUsers = usersList.slice(0, 15);
+        let msg = `👥 Oxirgi 15 ta foydalanuvchi (Jami: ${usersList.length}):\n\n`;
+        topUsers.forEach((user: any, i: number) => {
+          msg += `${i+1}. ${user.firstName || ''} ${user.lastName || ''} ${user.username ? '(@' + user.username + ')' : ''} - ${user.testsTaken || 0} test, ${user.averageScore || 0}%\n`;
+        });
+        await ctx.editMessageText(msg, getAdminKeyboard()).catch(() => {});
+        await ctx.answerCbQuery();
+      });
+
+      bot.action('admin_broadcast', async (ctx) => {
+        const userId = ctx.from?.id;
+        if (!userId || !(await checkIfAdmin(userId))) {
+          return ctx.answerCbQuery("Ruxsat berilmadi!", { show_alert: true });
+        }
+        adminSessions.set(userId, { action: 'waiting_for_broadcast' });
+        await ctx.editMessageText("📢 Barcha foydalanuvchilarga yuboriladigan xabar matnini kiriting yoki bekor qilish uchun /cancel deb yozing:").catch(() => {});
+        await ctx.answerCbQuery();
+      });
+
+      bot.action('admin_channel', async (ctx) => {
+        const userId = ctx.from?.id;
+        if (!userId || !(await checkIfAdmin(userId))) {
+          return ctx.answerCbQuery("Ruxsat berilmadi!", { show_alert: true });
+        }
+        adminSessions.set(userId, { action: 'waiting_for_channel' });
+        await ctx.editMessageText("⚙️ Majburiy obuna kanallarini o'zgartirish.\n\nKanal yoki kanallar ro'yxatini vergul yoki bo'shliq bilan ajratib kiriting (masalan: `@channel1, @channel2`):\n\nBekor qilish uchun /cancel deb yozing:").catch(() => {});
+        await ctx.answerCbQuery();
+      });
+
+      bot.action('admin_help', async (ctx) => {
+        const userId = ctx.from?.id;
+        if (!userId || !(await checkIfAdmin(userId))) {
+          return ctx.answerCbQuery("Ruxsat berilmadi!", { show_alert: true });
+        }
+        const text = `❓ Admin Paneli Yordam:\n\n*Buyruqlar:* \n/admin - Boshqaruv panelini ochish\n/stats - Statistika\n/users - Oxirgi foydalanuvchilar\n/broadcast <xabar> - Tezkor e'lon\n\nKlaviatura orqali boshqarishda siz istalgan vaqtda so'rovni bekor qilish uchun /cancel deb yozib yuborishingiz mumkin.`;
+        await ctx.editMessageText(text, getAdminKeyboard()).catch(() => {});
+        await ctx.answerCbQuery();
+      });
+
+      bot.action('admin_logout', async (ctx) => {
+        const userId = ctx.from?.id;
+        if (userId) {
+          await setAdminStatus(userId, false);
+          adminSessions.delete(userId);
+          await ctx.editMessageText("👋 Siz admin panelidan muvaffaqiyatli chiqdingiz va admin huquqingiz tugatildi.").catch(() => {});
+        }
+        await ctx.answerCbQuery();
+      });
+
+      bot.on('text', async (ctx, next) => {
+        const userId = ctx.from?.id;
+        if (!userId) return next();
+
+        const session = adminSessions.get(userId);
+        if (session) {
+          const isUserAdmin = await checkIfAdmin(userId);
+          if (isUserAdmin) {
+            if (ctx.message.text === '/cancel' || ctx.message.text.toLowerCase() === 'bekor qilish' || ctx.message.text === 'cancel') {
+              adminSessions.delete(userId);
+              return ctx.reply('❌ Amal bekor qilindi. Boshqaruv paneli:', getAdminKeyboard());
+            }
+
+            if (session.action === 'waiting_for_broadcast') {
+              adminSessions.delete(userId);
+              const message = ctx.message.text;
+              const usersList = await getAllUsers();
+              ctx.reply(`📢 Barchaga xabar yuborish boshlandi (${usersList.length} ta foydalanuvchiga)...`);
+              
+              let successCount = 0;
+              let failCount = 0;
+              
+              for (const user of usersList) {
+                try {
+                  await bot!.telegram.sendMessage(user.id, message);
+                  successCount++;
+                } catch (e) {
+                  failCount++;
+                }
+                await new Promise(resolve => setTimeout(resolve, 50));
+              }
+              
+              return ctx.reply(`✅ Xabar yuborish yakunlandi.\n\nYetkazildi: ${successCount}\nXatolik: ${failCount}`, getAdminKeyboard());
+            }
+
+            if (session.action === 'waiting_for_channel') {
+              adminSessions.delete(userId);
+              const inputText = ctx.message.text.trim();
+              
+              // Split by commas, spaces, or newlines
+              const parsedChannels = inputText.split(/[\s,;\n]+/)
+                .map(ch => ch.trim())
+                .filter(ch => ch.length > 0)
+                .map(ch => ch.startsWith('@') ? ch : '@' + ch);
+
+              if (parsedChannels.length === 0) {
+                return ctx.reply("❌ Yaroqli kanal kiritilmadi. Boshqaruv paneli:", getAdminKeyboard());
+              }
+
+              await saveSettings(parsedChannels);
+              const formattedList = parsedChannels.join(', ');
+              return ctx.reply(`✅ Majburiy obuna kanallari muvaffaqiyatli o'zgartirildi!\n📢 Yangi kanallar ro'yxati: ${formattedList}`, getAdminKeyboard());
+            }
+          }
+        }
+
+        return next();
+      });
 
       const checkSubscription = async (ctx: any): Promise<boolean> => {
         try {
           const userId = ctx.from?.id;
           if (!userId) return false;
-          const member = await ctx.telegram.getChatMember(CHANNEL_USERNAME, userId);
-          return ['creator', 'administrator', 'member', 'restricted'].includes(member.status);
+          
+          const channels = globalSettings.channels && globalSettings.channels.length > 0
+            ? globalSettings.channels 
+            : [globalSettings.channelUsername];
+
+          const validChannels = channels.map(ch => ch.trim()).filter(ch => ch !== '');
+          if (validChannels.length === 0) return true;
+
+          // Paralel ravishda barcha kanallarni tekshiramiz (maksimal tezlik - 1 soniya ichida)
+          const results = await Promise.all(
+            validChannels.map(async (channel) => {
+              try {
+                const member = await ctx.telegram.getChatMember(channel, userId);
+                return ['creator', 'administrator', 'member', 'restricted'].includes(member.status);
+              } catch (error) {
+                console.error(`Error checking subscription for ${channel}:`, error);
+                return false;
+              }
+            })
+          );
+
+          return results.every(isSubbed => isSubbed === true);
         } catch (error) {
           console.error("Error checking subscription:", error);
           return false;
@@ -307,11 +579,21 @@ async function startServer() {
       };
 
       const sendSubscriptionPrompt = async (ctx: any) => {
-        const text = "Testlarni ishlash uchun avval quyidagi kanalga obuna bo'ling:";
-        const buttons = [
-          [Markup.button.url("📢 Kanalga obuna bo'lish", "https://t.me/dilmurodbekmatematika")],
-          [Markup.button.callback("✅ Obunani tekshirish", "check_sub")]
-        ];
+        const text = "Testlarni ishlash uchun avval barcha majburiy kanallarga obuna bo'ling:";
+        const channels = globalSettings.channels && globalSettings.channels.length > 0
+          ? globalSettings.channels 
+          : [globalSettings.channelUsername];
+        
+        const buttons: any[][] = [];
+        channels.forEach((channel, idx) => {
+          if (!channel || channel.trim() === '') return;
+          const cleanChannel = channel.replace('@', '').trim();
+          const channelLink = `https://t.me/${cleanChannel}`;
+          buttons.push([Markup.button.url(`📢 Obuna bo'lish: ${channel}`, channelLink)]);
+        });
+        
+        buttons.push([Markup.button.callback("✅ Obunani tekshirish", "check_sub")]);
+        
         if (ctx.callbackQuery) {
           await ctx.editMessageText(text, Markup.inlineKeyboard(buttons)).catch(console.error);
         } else {
@@ -319,12 +601,35 @@ async function startServer() {
         }
       };
 
-      bot.start(async (ctx) => {
+      // Obuna bo'lmagan foydalanuvchilarning barcha so'rovlarini to'xatuvchi va tezkor tekshiruvchi middleware
+      bot.use(async (ctx, next) => {
+        if (!ctx.from) return next();
+        
+        // Adminlar uchun barcha tekshiruvlarni chetlab o'tamiz
+        const isUserAdmin = await checkIfAdmin(ctx.from.id);
+        if (isUserAdmin) {
+          return next();
+        }
+
+        // check_sub, admin kabi maxsus aksiyalarni middleware bloklamaydi (bular o'zlarida tekshirishadi)
+        const isCheckSub = ctx.callbackQuery && 'data' in ctx.callbackQuery && ctx.callbackQuery.data === 'check_sub';
+        
+        if (isCheckSub) {
+          return next();
+        }
+
         const isSubscribed = await checkSubscription(ctx);
         if (!isSubscribed) {
+          if (ctx.callbackQuery) {
+            await ctx.answerCbQuery("Iltimos, avval barcha majburiy kanallarga obuna bo'ling!", { show_alert: true }).catch(() => {});
+          }
           return sendSubscriptionPrompt(ctx);
         }
 
+        return next();
+      });
+
+      bot.start(async (ctx) => {
         const buttons = variants.map((v, i) => 
           [Markup.button.callback(v.title, `start_variant_${i}`)]
         );
@@ -454,34 +759,33 @@ async function startServer() {
 
       // Webhooklar AI Studio muhitida proxy sababli ishlamaydi (302 Cookie check).
       // Shuning uchun faqat Polling dan foydalanamiz.
-      const launchBot = async (retries = 3) => {
-        for (let i = 0; i < retries; i++) {
+      // Cloud Run da container almashayotgan paytda (traffic shifting)
+      // eski instance o'chguncha 409 Conflict xatosi berishi tabiiy.
+      const launchBot = async () => {
+        let isRunning = false;
+        while (!isRunning) {
           try {
             await bot!.telegram.deleteWebhook({ drop_pending_updates: true });
             await bot!.launch({ dropPendingUpdates: true });
             console.log("Telegram bot launched in Polling mode.");
             botStatus = "running";
-            return;
+            isRunning = true;
           } catch (error: any) {
             if (error?.response?.error_code === 409) {
-              console.warn(`Conflict error (409) - another instance is running. (${i + 1}/${retries})`);
-              if (i === retries - 1) {
-                console.warn("Bot is already running on another server (e.g., Render). Stopping local polling attempts to prevent conflicts.");
-                botStatus = "running_elsewhere";
-                return; // Xatoni throw qilmasdan to'xtatamiz
-              }
-              await new Promise(resolve => setTimeout(resolve, 3000));
+              // 409 xatosi - bot boshqa joyda ishlab turibdi (yoki oldingi server hali tamomila o'chmagan).
+              // Jimjitgina kutamiz va qaytadan urinamiz.
+              botStatus = "waiting_for_lock";
+              await new Promise(resolve => setTimeout(resolve, 5000));
             } else {
-              throw error;
+              console.error("Failed to launch Telegram bot:", error);
+              botStatus = "error";
+              break;
             }
           }
         }
       };
 
-      launchBot().catch(error => {
-        console.error("Failed to launch Telegram bot:", error);
-        botStatus = "error";
-      });
+      launchBot();
       
       // Enable graceful stop
       process.once('SIGINT', () => bot?.stop('SIGINT'));
