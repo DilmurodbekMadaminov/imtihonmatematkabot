@@ -357,6 +357,145 @@ async function startServer() {
         );
       });
 
+      bot.command('admin', async (ctx) => {
+        const userId = ctx.from?.id;
+        if (!userId) return;
+
+        const args = ctx.payload;
+        if (args) {
+          const expectedPassword = process.env.ADMIN_PASSWORD || "1";
+          if (args.trim() === expectedPassword.trim()) {
+            const existing = userActivity.get(userId) || {} as Partial<UserData>;
+            const data: UserData = {
+              ...existing as UserData,
+              timestamp: Date.now(),
+              firstName: ctx.from.first_name,
+              lastName: ctx.from.last_name,
+              username: ctx.from.username,
+              testsTaken: existing.testsTaken || 0,
+              averageScore: existing.averageScore || 0,
+              isAdmin: true
+            };
+            userActivity.set(userId, data);
+            if (db) {
+              await setDoc(doc(db, 'users', userId.toString()), data, { merge: true });
+            }
+            return ctx.reply("🎉 Tabriklaymiz! Siz muvaffaqiyatli admin bo'ldingiz. Endi to'g'ridan-to'g'ri `/admin` buyrug'ini yuboring.");
+          } else {
+            return ctx.reply("❌ Noto'g'ri parol! Ruxsat olish uchun `/admin [parol]` formatida yuboring.");
+          }
+        }
+
+        const userData = userActivity.get(userId);
+        if (!userData || !userData.isAdmin) {
+          return ctx.reply("🔒 Boshqaruv ruxsati berilmagan. Adminlik huquqini faollashtirish uchun parolni kiriting:\n\n`/admin [parol]`");
+        }
+
+        const totalUsers = userActivity.size;
+        const totalTests = Array.from(userActivity.values()).reduce((sum, u) => sum + (u.testsTaken || 0), 0);
+        const totalScore = Array.from(userActivity.values()).reduce((sum, u) => sum + (u.averageScore || 0), 0);
+        const avgScore = totalUsers > 0 ? Math.round(totalScore / totalUsers) : 0;
+        const channelsCount = globalSettings.channels.length;
+
+        const text = `👨‍💼 *Admin Boshqaruv Oynasi*\n\n📊 *Tizim statistikasi:*\n• Jami a'zolar: *${totalUsers}* nafar\n• Ishlangan testlar: *${totalTests}* marta\n• O'rtacha o'zlashtirish: *${avgScore}%*\n• Hamkor kanallar: *${channelsCount}* ta\n\n🔔 *Xabar yuborish:*\nBarcha a'zolarga xabar yuborish uchun:\n\`/broadcast <xabar matni>\`\n\nSiz shuningdek quyidagi tugma orqali to'liq funksional **Web Admin Panelni** ochib, barcha foydalanuvchilarni boshqarishingiz mumkin.`;
+
+        const appUrl = process.env.APP_URL || "";
+        const buttons = [];
+        if (appUrl) {
+          buttons.push([Markup.button.webApp("🖥 Web Admin Panel", appUrl)]);
+        }
+        buttons.push([Markup.button.callback("🔄 Statistikani yangilash", "refresh_admin_stats")]);
+
+        await ctx.reply(text, {
+          parse_mode: "Markdown",
+          ...Markup.inlineKeyboard(buttons)
+        });
+      });
+
+      bot.command('broadcast', async (ctx) => {
+        const userId = ctx.from?.id;
+        if (!userId) return;
+        const userData = userActivity.get(userId);
+        if (!userData || !userData.isAdmin) {
+          return ctx.reply("🔒 Ushbu buyruq faqat adminlar uchun.");
+        }
+
+        const message = ctx.payload;
+        if (!message || message.trim() === "") {
+          return ctx.reply("⚠️ Xabar yozishni unutdingiz. Format: `/broadcast [xabar matni]`");
+        }
+
+        await ctx.reply("⏳ Xabar yuborilmoqda, kuting...");
+
+        let userIds: string[] = [];
+        if (db) {
+          try {
+            const snapshot = await getDocs(collection(db, "users"));
+            snapshot.forEach(docSnap => {
+              userIds.push(docSnap.id);
+            });
+          } catch (e) {
+            console.error("Database connection error in /broadcast command:", e);
+            userIds = Array.from(userActivity.keys()).map(id => id.toString());
+          }
+        } else {
+          userIds = Array.from(userActivity.keys()).map(id => id.toString());
+        }
+
+        if (userIds.length === 0) {
+          return ctx.reply("❌ Foydalanuvchilar topilmadi.");
+        }
+
+        let sentCount = 0;
+        let failedCount = 0;
+
+        for (const idStr of userIds) {
+          const uId = Number(idStr);
+          if (!uId || isNaN(uId)) continue;
+          try {
+            await ctx.telegram.sendMessage(uId, message);
+            sentCount++;
+          } catch (error) {
+            console.error(`Failed to broadcast message to ${uId}:`, error);
+            failedCount++;
+          }
+        }
+
+        await ctx.reply(`✅ Xabar yuborish yakunlandi:\n\n• Muvaffaqiyatli: *${sentCount}* ta\n• Muvaffaqiyatsiz: *${failedCount}* ta`, { parse_mode: "Markdown" });
+      });
+
+      bot.action('refresh_admin_stats', async (ctx) => {
+        const userId = ctx.from?.id;
+        if (!userId) return ctx.answerCbQuery();
+        
+        const userData = userActivity.get(userId);
+        if (!userData || !userData.isAdmin) {
+          return ctx.answerCbQuery("🔒 Siz admin emassiz!", { show_alert: true });
+        }
+
+        const totalUsers = userActivity.size;
+        const totalTests = Array.from(userActivity.values()).reduce((sum, u) => sum + (u.testsTaken || 0), 0);
+        const totalScore = Array.from(userActivity.values()).reduce((sum, u) => sum + (u.averageScore || 0), 0);
+        const avgScore = totalUsers > 0 ? Math.round(totalScore / totalUsers) : 0;
+        const channelsCount = globalSettings.channels.length;
+
+        const text = `👨‍💼 *Admin Boshqaruv Oynasi* (Yangilandi)\n\n📊 *Tizim statistikasi:*\n• Jami a'zolar: *${totalUsers}* nafar\n• Ishlangan testlar: *${totalTests}* marta\n• O'rtacha o'zlashtirish: *${avgScore}%*\n• Hamkor kanallar: *${channelsCount}* ta\n\n🔔 *Xabar yuborish:*\nBarcha a'zolarga xabar yuborish uchun:\n\`/broadcast <xabar matni>\`\n\nSiz shuningdek quyidagi tugma orqali to'liq funksional **Web Admin Panelni** ochib, barcha foydalanuvchilarni boshqarishingiz mumkin.`;
+
+        const appUrl = process.env.APP_URL || "";
+        const buttons = [];
+        if (appUrl) {
+          buttons.push([Markup.button.webApp("🖥 Web Admin Panel", appUrl)]);
+        }
+        buttons.push([Markup.button.callback("🔄 Statistikani yangilash", "refresh_admin_stats")]);
+
+        await ctx.editMessageText(text, {
+          parse_mode: "Markdown",
+          ...Markup.inlineKeyboard(buttons)
+        }).catch(() => {});
+        
+        await ctx.answerCbQuery("Statistika yangilandi!");
+      });
+
       bot.action('check_sub', async (ctx) => {
         const isSubscribed = await checkSubscription(ctx);
         if (isSubscribed) {
