@@ -4,6 +4,7 @@ import { Telegraf, Markup } from "telegraf";
 import path from "path";
 import fs from "fs";
 import { variants } from "./src/questions.js";
+import { mathSections } from "./src/mathSections.js";
 import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, setDoc, getDoc, getDocs, collection, query, where, Timestamp } from 'firebase/firestore';
 
@@ -234,7 +235,10 @@ async function getAllUsers() {
 }
 
 interface UserSession {
-  variantIndex: number;
+  type: 'majburiy' | 'matematika';
+  variantIndex?: number;
+  sectionId?: string;
+  sectionVariantIndex?: number;
   currentQuestion: number;
   answers: number[];
 }
@@ -627,13 +631,17 @@ async function startServer() {
         return next();
       });
 
+      const getMainMenuKeyboard = () => {
+        return Markup.inlineKeyboard([
+          [Markup.button.callback("📕 Majburiy Matematika (370 ta test)", "menu_majburiy")],
+          [Markup.button.callback("🧮 Matematika (Ixtisoslik bo'limlari)", "menu_matematika")]
+        ]);
+      };
+
       bot.start(async (ctx) => {
-        const buttons = variants.map((v, i) => 
-          [Markup.button.callback(v.title, `start_variant_${i}`)]
-        );
         ctx.reply(
-          "Salom! Men Matematika testini o'tkazuvchi botman.\n\nQaysi variantni ishlashni xohlaysiz?",
-          Markup.inlineKeyboard(buttons)
+          "Salom! Men Matematika testini o'tkazuvchi botman.\n\nQuyidagilardan birini tanlang:",
+          getMainMenuKeyboard()
         );
       });
 
@@ -641,9 +649,27 @@ async function startServer() {
         const session = sessions.get(chatId);
         if (!session) return;
         
-        const currentVariant = variants[session.variantIndex].questions;
-        const q = currentVariant[session.currentQuestion];
-        const text = `${variants[session.variantIndex].title}\n\nSavol ${session.currentQuestion + 1} / ${currentVariant.length}\n\n${q.text}`;
+        let questions: any[] = [];
+        let title = "";
+
+        if (session.type === 'majburiy' && session.variantIndex !== undefined) {
+          questions = variants[session.variantIndex].questions;
+          title = variants[session.variantIndex].title;
+        } else if (session.type === 'matematika' && session.sectionId && session.sectionVariantIndex !== undefined) {
+          const section = mathSections.find(s => s.id === session.sectionId);
+          if (section) {
+            questions = section.variants[session.sectionVariantIndex].questions;
+            title = `${section.title} - ${section.variants[session.sectionVariantIndex].title}`;
+          }
+        }
+
+        if (questions.length === 0) {
+          sessions.delete(chatId);
+          return ctx.reply("Xatolik yuz berdi. Iltimos, /test orqali qayta urinib ko'ring.");
+        }
+
+        const q = questions[session.currentQuestion];
+        const text = `${title}\n\nSavol ${session.currentQuestion + 1} / ${questions.length}\n\n${q.text}`;
         
         const buttons = q.options.map((opt, idx) => {
           return [Markup.button.callback(`${String.fromCharCode(65 + idx)}) ${opt}`, `ans_${idx}`)];
@@ -671,12 +697,9 @@ async function startServer() {
           return sendSubscriptionPrompt(ctx);
         }
 
-        const buttons = variants.map((v, i) => 
-          [Markup.button.callback(v.title, `start_variant_${i}`)]
-        );
         ctx.reply(
-          "Qaysi variantni ishlashni xohlaysiz?",
-          Markup.inlineKeyboard(buttons)
+          "Bo'limni tanlang:",
+          getMainMenuKeyboard()
         );
       });
 
@@ -684,16 +707,106 @@ async function startServer() {
         const isSubscribed = await checkSubscription(ctx);
         if (isSubscribed) {
           await ctx.deleteMessage().catch(() => {});
-          const buttons = variants.map((v, i) => 
-            [Markup.button.callback(v.title, `start_variant_${i}`)]
-          );
           ctx.reply(
-            "Rahmat! Obuna tasdiqlandi.\n\nQaysi variantni ishlashni xohlaysiz?",
-            Markup.inlineKeyboard(buttons)
+            "Rahmat! Obuna tasdiqlandi.\n\nQuyidagilardan birini tanlang:",
+            getMainMenuKeyboard()
           );
         } else {
           ctx.answerCbQuery("Siz hali kanalga obuna bo'lmagansiz!", { show_alert: true });
         }
+      });
+
+      bot.action('menu_majburiy', async (ctx) => {
+        const isSubscribed = await checkSubscription(ctx);
+        if (!isSubscribed) {
+          return sendSubscriptionPrompt(ctx);
+        }
+
+        const buttons: any[][] = [];
+        variants.forEach((v, i) => {
+          buttons.push([Markup.button.callback(v.title, `start_variant_${i}`)]);
+        });
+        buttons.push([Markup.button.callback("↩️ Orqaga", "main_menu")]);
+
+        await ctx.editMessageText(
+          "📕 Majburiy Matematika variantlaridan birini tanlang:",
+          Markup.inlineKeyboard(buttons)
+        ).catch(() => {});
+        await ctx.answerCbQuery();
+      });
+
+      bot.action('menu_matematika', async (ctx) => {
+        const isSubscribed = await checkSubscription(ctx);
+        if (!isSubscribed) {
+          return sendSubscriptionPrompt(ctx);
+        }
+
+        const buttons: any[][] = [];
+        mathSections.forEach((section) => {
+          buttons.push([Markup.button.callback(`📁 ${section.title}`, `sec_list_${section.id}`)]);
+        });
+        buttons.push([Markup.button.callback("↩️ Orqaga", "main_menu")]);
+
+        await ctx.editMessageText(
+          "🧮 Matematika ixtisoslik bo'limlaridan birini tanlang:",
+          Markup.inlineKeyboard(buttons)
+        ).catch(() => {});
+        await ctx.answerCbQuery();
+      });
+
+      bot.action('main_menu', async (ctx) => {
+        await ctx.editMessageText(
+          "Salom! Men Matematika testini o'tkazuvchi botman.\n\nQuyidagilardan birini tanlang:",
+          getMainMenuKeyboard()
+        ).catch(() => {});
+        await ctx.answerCbQuery();
+      });
+
+      bot.action(/sec_list_(.+)/, async (ctx) => {
+        const isSubscribed = await checkSubscription(ctx);
+        if (!isSubscribed) {
+          return sendSubscriptionPrompt(ctx);
+        }
+
+        const sectionId = ctx.match[1].trim();
+        const section = mathSections.find(s => s.id === sectionId);
+        
+        if (!section) {
+          return ctx.answerCbQuery("Bo'lim topilmadi!", { show_alert: true });
+        }
+
+        const buttons: any[][] = [];
+        section.variants.forEach((v, i) => {
+          buttons.push([Markup.button.callback(v.title, `start_sec_v_${sectionId}_${i}`)]);
+        });
+        buttons.push([Markup.button.callback("↩️ Orqaga", "menu_matematika")]);
+
+        await ctx.editMessageText(
+          `📁 ${section.title} bo'limi variantlari:\n\n${section.description}`,
+          Markup.inlineKeyboard(buttons)
+        ).catch(() => {});
+        await ctx.answerCbQuery();
+      });
+
+      bot.action(/start_sec_v_(.+)_(.+)/, async (ctx) => {
+        const isSubscribed = await checkSubscription(ctx);
+        if (!isSubscribed) {
+          return sendSubscriptionPrompt(ctx);
+        }
+
+        const chatId = ctx.chat?.id;
+        if (!chatId) return;
+        const sectionId = ctx.match[1];
+        const sectionVariantIndex = parseInt(ctx.match[2]);
+        
+        sessions.set(chatId, { 
+          type: 'matematika', 
+          sectionId, 
+          sectionVariantIndex, 
+          currentQuestion: 0, 
+          answers: [] 
+        });
+        await sendQuestion(ctx, chatId);
       });
 
       bot.action(/start_variant_(\d+)/, async (ctx) => {
@@ -705,7 +818,12 @@ async function startServer() {
         const chatId = ctx.chat?.id;
         if (!chatId) return;
         const variantIndex = parseInt(ctx.match[1]);
-        sessions.set(chatId, { variantIndex, currentQuestion: 0, answers: [] });
+        sessions.set(chatId, { 
+          type: 'majburiy', 
+          variantIndex, 
+          currentQuestion: 0, 
+          answers: [] 
+        });
         await sendQuestion(ctx, chatId);
       });
 
@@ -718,22 +836,40 @@ async function startServer() {
           return ctx.reply("Test sessiyasi topilmadi. Iltimos, /test orqali qaytadan boshlang.");
         }
 
+        let questions: any[] = [];
+        let title = "";
+
+        if (session.type === 'majburiy' && session.variantIndex !== undefined) {
+          questions = variants[session.variantIndex].questions;
+          title = variants[session.variantIndex].title;
+        } else if (session.type === 'matematika' && session.sectionId && session.sectionVariantIndex !== undefined) {
+          const section = mathSections.find(s => s.id === session.sectionId);
+          if (section) {
+            questions = section.variants[session.sectionVariantIndex].questions;
+            title = `${section.title} - ${section.variants[session.sectionVariantIndex].title}`;
+          }
+        }
+
+        if (questions.length === 0) {
+          sessions.delete(chatId);
+          return ctx.reply("Savollar topilmadi. Iltimos, /test orqali qaytadan urinib ko'ring.");
+        }
+
         const answerIdx = parseInt(ctx.match[1]);
         session.answers.push(answerIdx);
         session.currentQuestion++;
 
-        if (session.currentQuestion < variants[session.variantIndex].questions.length) {
+        if (session.currentQuestion < questions.length) {
           await sendQuestion(ctx, chatId);
         } else {
-          const currentVariant = variants[session.variantIndex].questions;
-          const isCorrect = session.answers.map((ans, i) => ans === currentVariant[i].correct);
+          const isCorrect = session.answers.map((ans, i) => ans === questions[i].correct);
           const rawScore = isCorrect.filter(Boolean).length;
-          const percentage = Math.round((rawScore / currentVariant.length) * 100);
+          const percentage = Math.round((rawScore / questions.length) * 100);
 
           await trackTestResult(chatId, percentage);
 
-          let resultText = `🎉 ${variants[session.variantIndex].title} yakunlandi!\n\n`;
-          resultText += `📊 To'g'ri javoblar: ${rawScore} / ${currentVariant.length}\n`;
+          let resultText = `🎉 ${title} yakunlandi!\n\n`;
+          resultText += `📊 To'g'ri javoblar: ${rawScore} / ${questions.length}\n`;
           resultText += `🎯 Natija: ${percentage}%\n\n`;
           
           resultText += `📝 Savollar tahlili:\n`;
@@ -741,15 +877,13 @@ async function startServer() {
             resultText += `${i + 1}-savol: ${correct ? "✅ To'g'ri" : "❌ Noto'g'ri"}\n`;
           });
 
-          const buttons = variants.map((v, i) => 
-            [Markup.button.callback(v.title, `start_variant_${i}`)]
-          );
-
           if (ctx.callbackQuery) {
-            await ctx.editMessageText(resultText, Markup.inlineKeyboard(buttons)).catch(console.error);
-          } else {
-            await ctx.reply(resultText, Markup.inlineKeyboard(buttons)).catch(console.error);
+            try {
+              await ctx.deleteMessage();
+            } catch (e) {}
           }
+
+          await ctx.reply(resultText, getMainMenuKeyboard());
           
           sessions.delete(chatId);
         }
