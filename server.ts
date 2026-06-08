@@ -5,6 +5,7 @@ import path from "path";
 import fs from "fs";
 import { variants } from "./src/questions.js";
 import { mathSections } from "./src/mathSections.js";
+import { milliySertifikat } from "./src/milliySertifikat.js";
 import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, setDoc, getDoc, getDocs, collection, query, where, Timestamp } from 'firebase/firestore';
 
@@ -123,52 +124,7 @@ async function trackUser(user: { id: number; first_name?: string; last_name?: st
   }
 }
 
-async function checkIfAdmin(userId: number): Promise<boolean> {
-  const localUser = userActivity.get(userId);
-  if (localUser && localUser.isAdmin) return true;
-  
-  if (db) {
-    try {
-      const userDoc = await getDoc(doc(db, 'users', userId.toString()));
-      if (userDoc.exists()) {
-        const uData = userDoc.data();
-        if (uData?.isAdmin) {
-          if (localUser) {
-            localUser.isAdmin = true;
-          } else {
-            userActivity.set(userId, {
-              timestamp: uData.timestamp || Date.now(),
-              firstName: uData.firstName,
-              lastName: uData.lastName,
-              username: uData.username,
-              testsTaken: uData.testsTaken || 0,
-              averageScore: uData.averageScore || 0,
-              isAdmin: true
-            });
-          }
-          return true;
-        }
-      }
-    } catch (e) {
-      console.error('Error checking admin status in Firestore:', e);
-    }
-  }
-  return false;
-}
 
-async function setAdminStatus(userId: number, isAdmin: boolean) {
-  const localUser = userActivity.get(userId) || { timestamp: Date.now() } as UserData;
-  localUser.isAdmin = isAdmin;
-  userActivity.set(userId, localUser);
-
-  if (db) {
-    try {
-      await setDoc(doc(db, 'users', userId.toString()), { isAdmin }, { merge: true });
-    } catch (e) {
-      console.error('Error saving admin status to Firestore:', e);
-    }
-  }
-}
 
 async function trackTestResult(userId: number, percentage: number) {
   const existing = userActivity.get(userId);
@@ -195,59 +151,10 @@ async function trackTestResult(userId: number, percentage: number) {
   }
 }
 
-async function getMonthlyUsersCount() {
-  if (db) {
-    try {
-      const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
-      const q = query(collection(db, 'users'), where('timestamp', '>=', thirtyDaysAgo));
-      const snapshot = await getDocs(q);
-      return snapshot.size;
-    } catch (e) {
-      console.error('Error getting monthly users from Firestore:', e);
-    }
-  }
-  
-  // Fallback
-  const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
-  let count = 0;
-  for (const data of userActivity.values()) {
-    if (data.timestamp >= thirtyDaysAgo) count++;
-  }
-  return count;
-}
 
-async function getTotalUsersCount() {
-  if (db) {
-    try {
-      const snapshot = await getDocs(collection(db, 'users'));
-      return snapshot.size;
-    } catch (e) {
-      console.error('Error getting total users from Firestore:', e);
-    }
-  }
-  return userActivity.size;
-}
-
-async function getAllUsers() {
-  if (db) {
-    try {
-      const snapshot = await getDocs(collection(db, 'users'));
-      return snapshot.docs.map(doc => ({
-        id: Number(doc.id),
-        ...doc.data()
-      })).sort((a: any, b: any) => b.timestamp - a.timestamp);
-    } catch (e) {
-      console.error('Error getting all users from Firestore:', e);
-    }
-  }
-  return Array.from(userActivity.entries()).map(([id, data]) => ({
-    id,
-    ...data
-  })).sort((a, b) => b.timestamp - a.timestamp);
-}
 
 interface UserSession {
-  type: 'majburiy' | 'matematika';
+  type: 'majburiy' | 'matematika' | 'milliy';
   variantIndex?: number;
   sectionId?: string;
   sectionVariantIndex?: number;
@@ -278,64 +185,7 @@ async function startServer() {
 
   app.use(express.json());
 
-  app.get('/api/admin/stats', async (req, res) => {
-    const authHeader = req.headers.authorization;
-    const adminPassword = process.env.ADMIN_PASSWORD || '1';
-    
-    if (!authHeader || authHeader !== `Bearer ${adminPassword}`) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-    
-    res.json({ 
-      usersCount: await getTotalUsersCount(),
-      monthlyUsers: await getMonthlyUsersCount()
-    });
-  });
 
-  app.get('/api/admin/users', async (req, res) => {
-    const authHeader = req.headers.authorization;
-    const adminPassword = process.env.ADMIN_PASSWORD || '1';
-    
-    if (!authHeader || authHeader !== `Bearer ${adminPassword}`) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-    
-    const usersList = await getAllUsers();
-    res.json(usersList);
-  });
-
-  app.post('/api/admin/broadcast', async (req, res) => {
-    const authHeader = req.headers.authorization;
-    const adminPassword = process.env.ADMIN_PASSWORD || '1';
-    
-    if (!authHeader || authHeader !== `Bearer ${adminPassword}`) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-    
-    const { message } = req.body;
-    if (!message || !bot) {
-      return res.status(400).json({ error: 'Message or bot not available' });
-    }
-
-    const usersList = await getAllUsers();
-    let successCount = 0;
-    let failCount = 0;
-
-    // Send messages in background to avoid blocking the request
-    res.json({ status: 'started', totalUsers: usersList.length });
-
-    for (const user of usersList) {
-      try {
-        await bot.telegram.sendMessage(user.id, message);
-        successCount++;
-      } catch (e) {
-        failCount++;
-      }
-      // Add a small delay to avoid hitting Telegram API rate limits
-      await new Promise(resolve => setTimeout(resolve, 50));
-    }
-    console.log(`Broadcast finished. Success: ${successCount}, Failed: ${failCount}`);
-  });
 
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   let botStatus = "not_configured";
@@ -352,213 +202,7 @@ async function startServer() {
         return next();
       });
 
-      const getAdminKeyboard = () => {
-        return Markup.inlineKeyboard([
-          [Markup.button.callback("📊 Statistika", "admin_stats"), Markup.button.callback("👥 Foydalanuvchilar", "admin_users")],
-          [Markup.button.callback("📢 E'lon yuborish", "admin_broadcast"), Markup.button.callback("⚙️ Kanalni sozlash", "admin_channel")],
-          [Markup.button.callback("❓ Yordam", "admin_help"), Markup.button.callback("🚪 Chiqish", "admin_logout")]
-        ]);
-      };
 
-      interface AdminSession {
-        action: 'waiting_for_broadcast' | 'waiting_for_channel';
-      }
-      const adminSessions = new Map<number, AdminSession>();
-
-      bot.command('admin', async (ctx) => {
-        const adminPassword = process.env.ADMIN_PASSWORD || '1';
-        const args = ctx.message.text.split(' ');
-        const userId = ctx.from.id;
-
-        const isUserAdmin = await checkIfAdmin(userId);
-
-        if (args.length > 1 && args[1] === adminPassword) {
-          await setAdminStatus(userId, true);
-          return ctx.reply('✅ Admin panelga muvaffaqiyatli kirdingiz! Sizga admin huquqi doimiy berildi.\n\nQuyidagi tugmalardan foydalanib panelni boshqarishingiz mumkin:', getAdminKeyboard());
-        } else if (isUserAdmin) {
-          const total = await getTotalUsersCount();
-          const monthly = await getMonthlyUsersCount();
-          const channelsList = (globalSettings.channels && globalSettings.channels.length > 0)
-            ? globalSettings.channels.join(', ')
-            : globalSettings.channelUsername;
-          return ctx.reply(`🛠 Admin Boshqaruv Paneli:\n\n📢 Majburiy obuna kanallari: ${channelsList}\n👥 Jami foydalanuvchilar: ${total}\n📅 Oylik faol: ${monthly}\n\nQuyidagi tugmalar yordamida botni boshqaring:`, getAdminKeyboard());
-        } else {
-          return ctx.reply('Sizda admin huquqlari yo\'q. Admin panelga kirish uchun parolni kiriting: \n`/admin <parol>`', { parse_mode: 'Markdown' });
-        }
-      });
-
-      bot.command('stats', async (ctx) => {
-        if (!(await checkIfAdmin(ctx.from.id))) return;
-        const total = await getTotalUsersCount();
-        const monthly = await getMonthlyUsersCount();
-        ctx.reply(`📊 Statistika:\n\n👥 Jami foydalanuvchilar: ${total}\n📅 Oylik faol foydalanuvchilar: ${monthly}`);
-      });
-
-      bot.command('users', async (ctx) => {
-        if (!(await checkIfAdmin(ctx.from.id))) return;
-        const usersList = await getAllUsers();
-        const topUsers = usersList.slice(0, 15);
-        let msg = `👥 Oxirgi 15 ta foydalanuvchi (Jami: ${usersList.length}):\n\n`;
-        topUsers.forEach((user: any, i: number) => {
-          msg += `${i+1}. ${user.firstName || ''} ${user.lastName || ''} ${user.username ? '(@' + user.username + ')' : ''} - ${user.testsTaken || 0} test, ${user.averageScore || 0}%\n`;
-        });
-        ctx.reply(msg);
-      });
-
-      bot.command('broadcast', async (ctx) => {
-        if (!(await checkIfAdmin(ctx.from.id))) return;
-        const message = ctx.message.text.replace('/broadcast', '').trim();
-        if (!message) {
-          return ctx.reply('Xabar matnini kiriting: /broadcast <xabar>');
-        }
-        
-        const usersList = await getAllUsers();
-        ctx.reply(`Xabar yuborish boshlandi (${usersList.length} ta foydalanuvchiga)...`);
-        
-        let successCount = 0;
-        let failCount = 0;
-        
-        for (const user of usersList) {
-          try {
-            await bot!.telegram.sendMessage(user.id, message);
-            successCount++;
-          } catch (e) {
-            failCount++;
-          }
-          await new Promise(resolve => setTimeout(resolve, 50));
-        }
-        
-        ctx.reply(`✅ Xabar yuborish yakunlandi.\n\nYetkazildi: ${successCount}\nXatolik: ${failCount}`);
-      });
-
-      bot.action('admin_stats', async (ctx) => {
-        const userId = ctx.from?.id;
-        if (!userId || !(await checkIfAdmin(userId))) {
-          return ctx.answerCbQuery("Ruxsat berilmadi!", { show_alert: true });
-        }
-        const total = await getTotalUsersCount();
-        const monthly = await getMonthlyUsersCount();
-        const channelsList = (globalSettings.channels && globalSettings.channels.length > 0)
-          ? globalSettings.channels.join(', ')
-          : globalSettings.channelUsername;
-        const text = `📊 Tizim Statistikasi:\n\n📢 Majburiy obuna kanallari: ${channelsList}\n👥 Jami foydalanuvchilar: ${total} ta\n📅 Oylik faol foydalanuvchilar: ${monthly} ta\n\nYangilangan vaqti: ${new Date().toLocaleTimeString()}`;
-        await ctx.editMessageText(text, getAdminKeyboard()).catch(() => {});
-        await ctx.answerCbQuery();
-      });
-
-      bot.action('admin_users', async (ctx) => {
-        const userId = ctx.from?.id;
-        if (!userId || !(await checkIfAdmin(userId))) {
-          return ctx.answerCbQuery("Ruxsat berilmadi!", { show_alert: true });
-        }
-        const usersList = await getAllUsers();
-        const topUsers = usersList.slice(0, 15);
-        let msg = `👥 Oxirgi 15 ta foydalanuvchi (Jami: ${usersList.length}):\n\n`;
-        topUsers.forEach((user: any, i: number) => {
-          msg += `${i+1}. ${user.firstName || ''} ${user.lastName || ''} ${user.username ? '(@' + user.username + ')' : ''} - ${user.testsTaken || 0} test, ${user.averageScore || 0}%\n`;
-        });
-        await ctx.editMessageText(msg, getAdminKeyboard()).catch(() => {});
-        await ctx.answerCbQuery();
-      });
-
-      bot.action('admin_broadcast', async (ctx) => {
-        const userId = ctx.from?.id;
-        if (!userId || !(await checkIfAdmin(userId))) {
-          return ctx.answerCbQuery("Ruxsat berilmadi!", { show_alert: true });
-        }
-        adminSessions.set(userId, { action: 'waiting_for_broadcast' });
-        await ctx.editMessageText("📢 Barcha foydalanuvchilarga yuboriladigan xabar matnini kiriting yoki bekor qilish uchun /cancel deb yozing:").catch(() => {});
-        await ctx.answerCbQuery();
-      });
-
-      bot.action('admin_channel', async (ctx) => {
-        const userId = ctx.from?.id;
-        if (!userId || !(await checkIfAdmin(userId))) {
-          return ctx.answerCbQuery("Ruxsat berilmadi!", { show_alert: true });
-        }
-        adminSessions.set(userId, { action: 'waiting_for_channel' });
-        await ctx.editMessageText("⚙️ Majburiy obuna kanallarini o'zgartirish.\n\nKanal yoki kanallar ro'yxatini vergul yoki bo'shliq bilan ajratib kiriting (masalan: `@channel1, @channel2`):\n\nBekor qilish uchun /cancel deb yozing:").catch(() => {});
-        await ctx.answerCbQuery();
-      });
-
-      bot.action('admin_help', async (ctx) => {
-        const userId = ctx.from?.id;
-        if (!userId || !(await checkIfAdmin(userId))) {
-          return ctx.answerCbQuery("Ruxsat berilmadi!", { show_alert: true });
-        }
-        const text = `❓ Admin Paneli Yordam:\n\n*Buyruqlar:* \n/admin - Boshqaruv panelini ochish\n/stats - Statistika\n/users - Oxirgi foydalanuvchilar\n/broadcast <xabar> - Tezkor e'lon\n\nKlaviatura orqali boshqarishda siz istalgan vaqtda so'rovni bekor qilish uchun /cancel deb yozib yuborishingiz mumkin.`;
-        await ctx.editMessageText(text, getAdminKeyboard()).catch(() => {});
-        await ctx.answerCbQuery();
-      });
-
-      bot.action('admin_logout', async (ctx) => {
-        const userId = ctx.from?.id;
-        if (userId) {
-          await setAdminStatus(userId, false);
-          adminSessions.delete(userId);
-          await ctx.editMessageText("👋 Siz admin panelidan muvaffaqiyatli chiqdingiz va admin huquqingiz tugatildi.").catch(() => {});
-        }
-        await ctx.answerCbQuery();
-      });
-
-      bot.on('text', async (ctx, next) => {
-        const userId = ctx.from?.id;
-        if (!userId) return next();
-
-        const session = adminSessions.get(userId);
-        if (session) {
-          const isUserAdmin = await checkIfAdmin(userId);
-          if (isUserAdmin) {
-            if (ctx.message.text === '/cancel' || ctx.message.text.toLowerCase() === 'bekor qilish' || ctx.message.text === 'cancel') {
-              adminSessions.delete(userId);
-              return ctx.reply('❌ Amal bekor qilindi. Boshqaruv paneli:', getAdminKeyboard());
-            }
-
-            if (session.action === 'waiting_for_broadcast') {
-              adminSessions.delete(userId);
-              const message = ctx.message.text;
-              const usersList = await getAllUsers();
-              ctx.reply(`📢 Barchaga xabar yuborish boshlandi (${usersList.length} ta foydalanuvchiga)...`);
-              
-              let successCount = 0;
-              let failCount = 0;
-              
-              for (const user of usersList) {
-                try {
-                  await bot!.telegram.sendMessage(user.id, message);
-                  successCount++;
-                } catch (e) {
-                  failCount++;
-                }
-                await new Promise(resolve => setTimeout(resolve, 50));
-              }
-              
-              return ctx.reply(`✅ Xabar yuborish yakunlandi.\n\nYetkazildi: ${successCount}\nXatolik: ${failCount}`, getAdminKeyboard());
-            }
-
-            if (session.action === 'waiting_for_channel') {
-              adminSessions.delete(userId);
-              const inputText = ctx.message.text.trim();
-              
-              // Split by commas, spaces, or newlines
-              const parsedChannels = inputText.split(/[\s,;\n]+/)
-                .map(ch => ch.trim())
-                .filter(ch => ch.length > 0)
-                .map(ch => ch.startsWith('@') ? ch : '@' + ch);
-
-              if (parsedChannels.length === 0) {
-                return ctx.reply("❌ Yaroqli kanal kiritilmadi. Boshqaruv paneli:", getAdminKeyboard());
-              }
-
-              await saveSettings(parsedChannels);
-              const formattedList = parsedChannels.join(', ');
-              return ctx.reply(`✅ Majburiy obuna kanallari muvaffaqiyatli o'zgartirildi!\n📢 Yangi kanallar ro'yxati: ${formattedList}`, getAdminKeyboard());
-            }
-          }
-        }
-
-        return next();
-      });
 
       const checkSubscription = async (ctx: any): Promise<boolean> => {
         try {
@@ -619,13 +263,7 @@ async function startServer() {
       bot.use(async (ctx, next) => {
         if (!ctx.from) return next();
         
-        // Adminlar uchun barcha tekshiruvlarni chetlab o'tamiz
-        const isUserAdmin = await checkIfAdmin(ctx.from.id);
-        if (isUserAdmin) {
-          return next();
-        }
-
-        // check_sub, admin kabi maxsus aksiyalarni middleware bloklamaydi (bular o'zlarida tekshirishadi)
+        // check_sub kabi maxsus aksiyalarni middleware bloklamaydi (bular o'zlarida tekshirishadi)
         const isCheckSub = ctx.callbackQuery && 'data' in ctx.callbackQuery && ctx.callbackQuery.data === 'check_sub';
         
         if (isCheckSub) {
@@ -646,7 +284,8 @@ async function startServer() {
       const getMainMenuKeyboard = () => {
         return Markup.inlineKeyboard([
           [Markup.button.callback("📕 Majburiy Matematika (370 ta test)", "menu_majburiy")],
-          [Markup.button.callback("🧮 Matematika (Ixtisoslik bo'limlari)", "menu_matematika")]
+          [Markup.button.callback("🧮 Matematika (Ixtisoslik bo'limlari)", "menu_matematika")],
+          [Markup.button.callback("🎓 Milliy Sertifikat imtihonlari", "menu_milliy")]
         ]);
       };
 
@@ -667,6 +306,9 @@ async function startServer() {
         if (session.type === 'majburiy' && session.variantIndex !== undefined) {
           questions = variants[session.variantIndex].questions;
           title = variants[session.variantIndex].title;
+        } else if (session.type === 'milliy' && session.variantIndex !== undefined) {
+          questions = milliySertifikat[session.variantIndex].questions;
+          title = milliySertifikat[session.variantIndex].title;
         } else if (session.type === 'matematika' && session.sectionId && session.sectionVariantIndex !== undefined) {
           const section = mathSections.find(s => s.id === session.sectionId);
           if (section) {
@@ -766,6 +408,43 @@ async function startServer() {
         await ctx.answerCbQuery();
       });
 
+      bot.action('menu_milliy', async (ctx) => {
+        const isSubscribed = await checkSubscription(ctx);
+        if (!isSubscribed) {
+          return sendSubscriptionPrompt(ctx);
+        }
+
+        const buttons: any[][] = [];
+        milliySertifikat.forEach((v, i) => {
+          buttons.push([Markup.button.callback(v.title, `start_milliy_${i}`)]);
+        });
+        buttons.push([Markup.button.callback("↩️ Orqaga", "main_menu")]);
+
+        await ctx.editMessageText(
+          "🎓 Milliy Sertifikat imtihonlaridan birini tanlang:",
+          Markup.inlineKeyboard(buttons)
+        ).catch(() => {});
+        await ctx.answerCbQuery();
+      });
+
+      bot.action(/start_milliy_(\d+)/, async (ctx) => {
+        const isSubscribed = await checkSubscription(ctx);
+        if (!isSubscribed) {
+          return sendSubscriptionPrompt(ctx);
+        }
+
+        const chatId = ctx.chat?.id;
+        if (!chatId) return;
+        const variantIndex = parseInt(ctx.match[1]);
+        sessions.set(chatId, { 
+          type: 'milliy', 
+          variantIndex, 
+          currentQuestion: 0, 
+          answers: [] 
+        });
+        await sendQuestion(ctx, chatId);
+      });
+
       bot.action('main_menu', async (ctx) => {
         await ctx.editMessageText(
           "Salom! Men Matematika testini o'tkazuvchi botman.\n\nQuyidagilardan birini tanlang:",
@@ -854,6 +533,9 @@ async function startServer() {
         if (session.type === 'majburiy' && session.variantIndex !== undefined) {
           questions = variants[session.variantIndex].questions;
           title = variants[session.variantIndex].title;
+        } else if (session.type === 'milliy' && session.variantIndex !== undefined) {
+          questions = milliySertifikat[session.variantIndex].questions;
+          title = milliySertifikat[session.variantIndex].title;
         } else if (session.type === 'matematika' && session.sectionId && session.sectionVariantIndex !== undefined) {
           const section = mathSections.find(s => s.id === session.sectionId);
           if (section) {
@@ -956,6 +638,109 @@ async function startServer() {
       }
     } else {
       res.status(404).json({ error: "Bot not initialized" });
+    }
+  });
+
+  // Admin APIs
+  app.get("/api/users", async (req, res) => {
+    try {
+      if (db) {
+        const snapshot = await getDocs(collection(db, "users"));
+        const usersList: any[] = [];
+        snapshot.forEach(docSnap => {
+          usersList.push({
+            id: docSnap.id,
+            ...docSnap.data()
+          });
+        });
+        res.json(usersList);
+      } else {
+        const usersList = Array.from(userActivity.entries()).map(([id, data]) => ({
+          id: id.toString(),
+          ...data
+        }));
+        res.json(usersList);
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/settings", (req, res) => {
+    res.json(globalSettings);
+  });
+
+  app.post("/api/settings", async (req, res) => {
+    const { channels } = req.body;
+    if (!Array.isArray(channels)) {
+      return res.status(400).json({ error: "channels must be an array" });
+    }
+    try {
+      await saveSettings(channels);
+      res.json({ success: true, settings: globalSettings });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/message-user", async (req, res) => {
+    const { userId, message } = req.body;
+    if (!userId || !message) {
+      return res.status(400).json({ error: "userId and message are required" });
+    }
+    if (!bot) {
+      return res.status(400).json({ error: "Bot is not initialized" });
+    }
+    try {
+      await bot.telegram.sendMessage(Number(userId), message);
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/broadcast", async (req, res) => {
+    const { message } = req.body;
+    if (!message || typeof message !== "string" || message.trim() === "") {
+      return res.status(400).json({ error: "Message content cannot be empty" });
+    }
+    if (!bot) {
+      return res.status(400).json({ error: "Telegram bot is not initialized" });
+    }
+
+    try {
+      let userIds: string[] = [];
+      if (db) {
+        const snapshot = await getDocs(collection(db, "users"));
+        snapshot.forEach(docSnap => {
+          userIds.push(docSnap.id);
+        });
+      } else {
+        userIds = Array.from(userActivity.keys()).map(id => id.toString());
+      }
+
+      if (userIds.length === 0) {
+        return res.json({ success: true, sentCount: 0, failedCount: 0, message: "No registered users found." });
+      }
+
+      let sentCount = 0;
+      let failedCount = 0;
+
+      for (const idStr of userIds) {
+        const userId = Number(idStr);
+        if (!userId || isNaN(userId)) continue;
+        try {
+          await bot.telegram.sendMessage(userId, message);
+          sentCount++;
+        } catch (error) {
+          console.error(`Failed to broadcast message to ${userId}:`, error);
+          failedCount++;
+        }
+      }
+
+      res.json({ success: true, sentCount, failedCount });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
     }
   });
 

@@ -22,15 +22,18 @@ import {
   FileText,
   Clock,
   MapPin,
-  Flame
+  Flame,
+  Shield
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { variants } from './questions';
 import { mathSections } from './mathSections';
+import { milliySertifikat } from './milliySertifikat';
 import { Question } from './types';
+import AdminPanel from './components/AdminPanel';
 
 function QuizApp() {
-  const [activeTab, setActiveTab] = useState<'majburiy' | 'matematika'>('majburiy');
+  const [activeTab, setActiveTab] = useState<'majburiy' | 'matematika' | 'milliy' | 'admin'>('majburiy');
   const [selectedVariant, setSelectedVariant] = useState<number | null>(null);
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
   const [selectedSectionVariantIndex, setSelectedSectionVariantIndex] = useState<number | null>(null);
@@ -65,6 +68,16 @@ function QuizApp() {
     setFinished(false);
   };
 
+  const handleStartMilliy = (variantIndex: number) => {
+    setSelectedVariant(variantIndex);
+    setSelectedSectionId(null);
+    setSelectedSectionVariantIndex(null);
+    setStarted(true);
+    setCurrentQuestion(0);
+    setAnswers([]);
+    setFinished(false);
+  };
+
   const handleBackToMenu = () => {
     setSelectedVariant(null);
     setSelectedSectionId(null);
@@ -78,6 +91,9 @@ function QuizApp() {
     if (activeTab === 'majburiy' && selectedVariant !== null) {
       return variants[selectedVariant]?.questions || [];
     }
+    if (activeTab === 'milliy' && selectedVariant !== null) {
+      return milliySertifikat[selectedVariant]?.questions || [];
+    }
     if (activeTab === 'matematika' && selectedSectionId !== null && selectedSectionVariantIndex !== null) {
       const section = mathSections.find(s => s.id === selectedSectionId);
       return section?.variants[selectedSectionVariantIndex]?.questions || [];
@@ -88,6 +104,9 @@ function QuizApp() {
   const currentTitle = useMemo<string>(() => {
     if (activeTab === 'majburiy' && selectedVariant !== null) {
       return variants[selectedVariant]?.title || '';
+    }
+    if (activeTab === 'milliy' && selectedVariant !== null) {
+      return milliySertifikat[selectedVariant]?.title || '';
     }
     if (activeTab === 'matematika' && selectedSectionId !== null && selectedSectionVariantIndex !== null) {
       const section = mathSections.find(s => s.id === selectedSectionId);
@@ -153,7 +172,7 @@ function QuizApp() {
           </div>
 
           {/* Navigation Tabs */}
-          <div className="flex border-b border-slate-200 mb-8 bg-white p-1 rounded-xl shadow-sm">
+          <div className="flex flex-col sm:flex-row gap-2 border-b border-slate-200 mb-8 bg-white p-2 rounded-xl shadow-sm">
             <button
               onClick={() => { setActiveTab('majburiy'); setSelectedSectionId(null); }}
               className={`flex-1 py-3 text-center font-semibold text-sm rounded-lg transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer ${
@@ -163,7 +182,7 @@ function QuizApp() {
               }`}
             >
               <BookOpen size={18} />
-              Majburiy Matematika <span className="bg-slate-200 text-slate-800 text-xs px-2 py-0.5 rounded-full font-bold ml-1 active-mode-badge border border-white">370 ta test</span>
+              Majburiy <span className="bg-slate-200 text-slate-800 text-xs px-2 py-0.5 rounded-full font-bold ml-1 active-mode-badge border border-white">370 ta test</span>
             </button>
             <button
               onClick={() => { setActiveTab('matematika'); setSelectedSectionId(null); }}
@@ -174,12 +193,34 @@ function QuizApp() {
               }`}
             >
               <Calculator size={18} />
-              Matematika (Ixtisoslik bo'limlari)
+              Ixtisoslik bo'limlari
+            </button>
+            <button
+              onClick={() => { setActiveTab('milliy'); setSelectedSectionId(null); }}
+              className={`flex-1 py-3 text-center font-semibold text-sm rounded-lg transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer ${
+                activeTab === 'milliy'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+              }`}
+            >
+              <GraduationCap size={18} />
+              Milliy Sertifikat <span className="bg-slate-200 text-slate-800 text-xs px-2 py-0.5 rounded-full font-bold ml-1 active-mode-badge border border-white">6 ta imtihon</span>
+            </button>
+            <button
+              onClick={() => { setActiveTab('admin'); setSelectedSectionId(null); }}
+              className={`flex-1 py-3 text-center font-semibold text-sm rounded-lg transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer ${
+                activeTab === 'admin'
+                  ? 'bg-slate-900 text-white shadow-md font-bold'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50 opacity-95'
+              }`}
+            >
+              <Shield size={18} />
+              Admin Panel
             </button>
           </div>
 
           <AnimatePresence mode="wait">
-            {activeTab === 'majburiy' ? (
+            {activeTab === 'majburiy' && (
               <motion.div
                 key="majburiy"
                 initial={{ opacity: 0, y: 15 }}
@@ -263,7 +304,9 @@ function QuizApp() {
                   )}
                 </div>
               </motion.div>
-            ) : (
+            )}
+
+            {activeTab === 'matematika' && (
               <motion.div
                 key="matematika"
                 initial={{ opacity: 0, y: 15 }}
@@ -354,6 +397,60 @@ function QuizApp() {
                     </div>
                   </div>
                 )}
+              </motion.div>
+            )}
+
+            {activeTab === 'milliy' && (
+              <motion.div
+                key="milliy"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                transition={{ duration: 0.3 }}
+                className="space-y-6"
+              >
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                  {milliySertifikat.map((v, i) => (
+                    <motion.div
+                      key={i}
+                      whileHover={{ y: -2, transition: { duration: 0.15 } }}
+                      className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 flex flex-col justify-between"
+                    >
+                      <div>
+                        <div className="flex items-center gap-2 text-indigo-600 font-bold text-xs uppercase tracking-wider mb-2">
+                          <span className="w-1.5 h-1.5 bg-indigo-600 rounded-full animate-pulse"></span>
+                          DTM / Bilim Baholash imtihoni
+                        </div>
+                        <h3 className="font-bold text-slate-850 text-md mb-4 h-12 leading-snug">
+                          {v.title}
+                        </h3>
+                      </div>
+                      <div className="flex items-center justify-between border-t border-slate-100 pt-3 mt-2">
+                        <span className="text-xs text-slate-500 flex items-center gap-1">
+                          <FileText size={14} /> {v.questions.length} ta Savol
+                        </span>
+                        <button
+                          onClick={() => handleStartMilliy(i)}
+                          className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold py-2 px-4 rounded-lg transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                        >
+                          Boshlash <ChevronRight size={14} />
+                        </button>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+
+            {activeTab === 'admin' && (
+              <motion.div
+                key="admin"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                transition={{ duration: 0.3 }}
+              >
+                <AdminPanel />
               </motion.div>
             )}
           </AnimatePresence>
