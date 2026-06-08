@@ -37,7 +37,7 @@ interface UserData {
 // Global settings stored persistently
 let globalSettings = {
   channelUsername: '@dilmurodbekmatematika',
-  channels: ['@dilmurodbekmatematika']
+  channels: ['@dilmurodbekmatematika', '@DilnuraMadaminova']
 };
 
 async function loadSettings() {
@@ -50,11 +50,23 @@ async function loadSettings() {
           if (data.channelUsername) {
             globalSettings.channelUsername = data.channelUsername;
           }
+          let channelsList: string[] = [];
           if (Array.isArray(data.channels)) {
-            globalSettings.channels = data.channels;
+            channelsList = data.channels;
           } else if (data.channelUsername) {
-            globalSettings.channels = [data.channelUsername];
+            channelsList = [data.channelUsername];
+          } else {
+            channelsList = ['@dilmurodbekmatematika', '@DilnuraMadaminova'];
           }
+
+          // Force-add @DilnuraMadaminova if missing, per user instruction
+          const targetChannel = '@DilnuraMadaminova';
+          if (!channelsList.some(ch => ch.toLowerCase() === targetChannel.toLowerCase())) {
+            channelsList.push(targetChannel);
+            await saveSettings(channelsList);
+          }
+
+          globalSettings.channels = channelsList;
           console.log("Global settings loaded from Firebase:", globalSettings);
         }
       } else {
