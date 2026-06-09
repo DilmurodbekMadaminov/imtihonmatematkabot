@@ -33,7 +33,33 @@ interface UserData {
   testsTaken?: number;
   averageScore?: number;
   isAdmin?: boolean;
+  isBanned?: boolean;
 }
+
+interface Candidate {
+  id: string;
+  fullName: string;
+  phone: string;
+  direction: string;
+  score: number;
+  status: 'pending' | 'approved' | 'rejected';
+  timestamp: number;
+  experience: string;
+}
+
+let candidatesCache = new Map<string, Candidate>();
+
+const seedCandidates = () => {
+  if (candidatesCache.size === 0) {
+    const defaultCandidates: Candidate[] = [
+      { id: "4820194", fullName: "Azizbek Karimov", phone: "+998901234567", direction: "Katta O'qituvchi", score: 85, status: "pending", timestamp: Date.now() - 3600000 * 5, experience: "3 yillik matematika repetitorlik tajribasi" },
+      { id: "1059281", fullName: "Dilshoda Ergasheva", phone: "+998935552144", direction: "Metodist", score: 92, status: "approved", timestamp: Date.now() - 3600000 * 24, experience: "Xalqaro matematika loyihalarida 2 yil" },
+      { id: "8591024", fullName: "Shoxruxbek Olimov", phone: "+998991118833", direction: "Junior Mentor", score: 45, status: "rejected", timestamp: Date.now() - 3600000 * 48, experience: "Pedagogika universiteti bitiruvchisi" },
+      { id: "9510258", fullName: "Zulxumor Tursunova", phone: "+998977770022", direction: "Matematika o'qituvchisi", score: 78, status: "pending", timestamp: Date.now() - 3600000 * 72, experience: "Maktabda matematika fani o'qituvchisi" }
+    ];
+    defaultCandidates.forEach(c => candidatesCache.set(c.id, c));
+  }
+};
 
 // Global settings stored persistently
 let globalSettings = {
@@ -110,7 +136,8 @@ async function trackUser(user: { id: number; first_name?: string; last_name?: st
     username: user.username,
     testsTaken: existing.testsTaken || 0,
     averageScore: existing.averageScore || 0,
-    isAdmin: existing.isAdmin || false
+    isAdmin: existing.isAdmin || false,
+    isBanned: existing.isBanned || false
   };
   
   userActivity.set(user.id, data);
@@ -170,6 +197,7 @@ async function startServer() {
 
   // Load configuration and prime the local cache on startup
   await loadSettings();
+  seedCandidates();
   if (db) {
     try {
       const snapshot = await getDocs(collection(db, 'users'));
@@ -178,6 +206,24 @@ async function startServer() {
         userActivity.set(Number(docSnap.id), data);
       });
       console.log(`Successfully primed cache with ${userActivity.size} users.`);
+
+      // Prime candidates
+      try {
+        const snap = await getDocs(collection(db, 'candidates'));
+        if (!snap.empty) {
+          snap.forEach(docSnap => {
+            candidatesCache.set(docSnap.id, docSnap.data() as Candidate);
+          });
+          console.log(`Loaded ${candidatesCache.size} candidates from Firestore.`);
+        } else {
+          for (const [id, value] of candidatesCache.entries()) {
+            await setDoc(doc(db, 'candidates', id), value);
+          }
+          console.log("Seeded candidates into Firestore.");
+        }
+      } catch (errCand) {
+        console.error("Error priming candidates cache:", errCand);
+      }
     } catch (e) {
       console.error("Error priming users cache on startup:", e);
     }
@@ -195,8 +241,17 @@ async function startServer() {
     try {
       bot = new Telegraf(botToken);
       
-      bot.use((ctx, next) => {
+      bot.use(async (ctx, next) => {
         if (ctx.from) {
+          const userData = userActivity.get(ctx.from.id);
+          if (userData && userData.isBanned) {
+            if (ctx.callbackQuery) {
+              await ctx.answerCbQuery("Siz botdan chetlashtirilgansiz! 🚫", { show_alert: true }).catch(() => {});
+            } else {
+              await ctx.reply("❌ Siz tizimdan chetlashtirilgansiz! Savollaringiz bo'lsa, ma'murlar bilan bog'laning.");
+            }
+            return;
+          }
           trackUser(ctx.from);
         }
         return next();
@@ -823,7 +878,7 @@ async function startServer() {
   });
 
   app.post("/api/message-user", async (req, res) => {
-    const { userId, message } = req.body;
+    const { userId, message, imageUrl } = req.body;
     if (!userId || !message) {
       return res.status(400).json({ error: "userId and message are required" });
     }
@@ -831,7 +886,11 @@ async function startServer() {
       return res.status(400).json({ error: "Bot is not initialized" });
     }
     try {
-      await bot.telegram.sendMessage(Number(userId), message);
+      if (imageUrl && imageUrl.trim() !== "") {
+        await bot.telegram.sendPhoto(Number(userId), imageUrl, { caption: message });
+      } else {
+        await bot.telegram.sendMessage(Number(userId), message);
+      }
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -839,7 +898,7 @@ async function startServer() {
   });
 
   app.post("/api/broadcast", async (req, res) => {
-    const { message } = req.body;
+    const { message, imageUrl } = req.body;
     if (!message || typeof message !== "string" || message.trim() === "") {
       return res.status(400).json({ error: "Message content cannot be empty" });
     }
@@ -868,8 +927,17 @@ async function startServer() {
       for (const idStr of userIds) {
         const userId = Number(idStr);
         if (!userId || isNaN(userId)) continue;
+        
+        // Skip banned users during broadcast!
+        const cachedUser = userActivity.get(userId);
+        if (cachedUser && cachedUser.isBanned) continue;
+
         try {
-          await bot.telegram.sendMessage(userId, message);
+          if (imageUrl && imageUrl.trim() !== "") {
+            await bot.telegram.sendPhoto(userId, imageUrl, { caption: message });
+          } else {
+            await bot.telegram.sendMessage(userId, message);
+          }
           sentCount++;
         } catch (error) {
           console.error(`Failed to broadcast message to ${userId}:`, error);
@@ -881,6 +949,75 @@ async function startServer() {
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
+  });
+
+  // Toggle Ban User API
+  app.post("/api/users/ban", async (req, res) => {
+    const { userId, isBanned } = req.body;
+    if (!userId) {
+      return res.status(400).json({ error: "userId is required" });
+    }
+    const uId = Number(userId);
+    const existing = userActivity.get(uId);
+    
+    // Even if user not fully in cache, track them as banned if they are real
+    const finalUser = existing || {
+      timestamp: Date.now(),
+      testsTaken: 0,
+      averageScore: 0,
+      isBanned: false
+    } as UserData;
+
+    finalUser.isBanned = !!isBanned;
+    userActivity.set(uId, finalUser);
+
+    if (db) {
+      try {
+        await setDoc(doc(db, 'users', userId.toString()), { isBanned: !!isBanned }, { merge: true });
+      } catch (e: any) {
+        console.error("Failed to commit ban status to Firestore:", e);
+      }
+    }
+    res.json({ success: true, user: finalUser });
+  });
+
+  // Get Candidates/Applicants for HR
+  app.get("/api/candidates", (req, res) => {
+    res.json(Array.from(candidatesCache.values()));
+  });
+
+  // Update Candidate Status & optional notification feedback
+  app.post("/api/candidates/status", async (req, res) => {
+    const { candidateId, status, message } = req.body;
+    if (!candidateId || !status) {
+      return res.status(400).json({ error: "candidateId and status are required" });
+    }
+    const candidate = candidatesCache.get(candidateId);
+    if (!candidate) {
+      return res.status(404).json({ error: "Candidate not found in cache" });
+    }
+
+    candidate.status = status;
+    candidatesCache.set(candidateId, candidate);
+
+    if (db) {
+      try {
+        await setDoc(doc(db, 'candidates', candidateId), { status }, { merge: true });
+      } catch (e) {
+        console.error("Failed to save candidate status change to Firestore:", e);
+      }
+    }
+
+    // Send Telegram Notification regarding their status change
+    if (bot && message && message.trim() !== "") {
+      try {
+        await bot.telegram.sendMessage(Number(candidateId), message);
+      } catch (err) {
+        console.error(`Failed to notify candidate ${candidateId} over telegram:`, err);
+      }
+    }
+
+    res.json({ success: true, candidate });
   });
 
   if (process.env.NODE_ENV !== "production") {
