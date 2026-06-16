@@ -147,9 +147,9 @@ async function trackUser(user: { id: number; first_name?: string; last_name?: st
   const data: UserData = {
     ...existing,
     timestamp: Date.now(),
-    firstName: user.first_name,
-    lastName: user.last_name,
-    username: user.username,
+    firstName: user.first_name || "",
+    lastName: user.last_name || "",
+    username: user.username || "",
     testsTaken: existing.testsTaken || 0,
     averageScore: existing.averageScore || 0,
     isAdmin: existing.isAdmin || false,
@@ -160,10 +160,51 @@ async function trackUser(user: { id: number; first_name?: string; last_name?: st
 
   if (db) {
     try {
-      await setDoc(doc(db, 'users', user.id.toString()), data, { merge: true });
+      // Clean any potential undefined keys from the object to prevent Firestore errors
+      const firestoreData = { ...data };
+      Object.keys(firestoreData).forEach(key => {
+        if (firestoreData[key as keyof UserData] === undefined) {
+          delete firestoreData[key as keyof UserData];
+        }
+      });
+      await setDoc(doc(db, 'users', user.id.toString()), firestoreData, { merge: true });
     } catch (e) {
       console.error('Error saving user to Firestore:', e);
     }
+  }
+}
+
+async function handleBroadcastError(uId: number, error: any) {
+  const errMsg = String(error?.message || error?.description || '').toLowerCase();
+  const isBlockedOrNotFound = 
+    errMsg.includes('chat not found') ||
+    errMsg.includes('bot was blocked') ||
+    errMsg.includes('user is deactivated') ||
+    errMsg.includes('forbidden') ||
+    errMsg.includes('not found') ||
+    errMsg.includes('bad request');
+
+  if (isBlockedOrNotFound) {
+    console.log(`User ${uId} blocked the bot or chat was not found (banning/marking as inactive to skip future broadcasts).`);
+    // Update local cache
+    const existing = userActivity.get(uId) || {} as UserData;
+    const updated: UserData = {
+      ...existing,
+      timestamp: Date.now(),
+      isBanned: true
+    };
+    userActivity.set(uId, updated);
+    
+    // Update Firebase DB
+    if (db) {
+      try {
+        await setDoc(doc(db, 'users', uId.toString()), { isBanned: true }, { merge: true }).catch(() => {});
+      } catch (e) {
+        // silent
+      }
+    }
+  } else {
+    console.log(`Failed to broadcast message to ${uId}: ${error?.message || error}`);
   }
 }
 
@@ -294,8 +335,20 @@ async function startServer() {
               try {
                 const member = await ctx.telegram.getChatMember(channel, userId);
                 return ['creator', 'administrator', 'member', 'restricted'].includes(member.status);
-              } catch (error) {
+              } catch (error: any) {
                 console.error(`Error checking subscription for ${channel}:`, error);
+                const errMsg = String(error?.message || error?.description || '').toLowerCase();
+                if (
+                  errMsg.includes('member list is inaccessible') ||
+                  errMsg.includes('chat not found') ||
+                  errMsg.includes('forbidden') ||
+                  errMsg.includes('not found') ||
+                  errMsg.includes('not a member') ||
+                  errMsg.includes('bad request')
+                ) {
+                  // Fallback to true to prevent blocking/breaking the bot when a user or inaccessible channel is added
+                  return true;
+                }
                 return false;
               }
             })
@@ -540,16 +593,22 @@ async function startServer() {
             const data: UserData = {
               ...existing as UserData,
               timestamp: Date.now(),
-              firstName: ctx.from.first_name,
-              lastName: ctx.from.last_name,
-              username: ctx.from.username,
+              firstName: ctx.from.first_name || "",
+              lastName: ctx.from.last_name || "",
+              username: ctx.from.username || "",
               testsTaken: existing.testsTaken || 0,
               averageScore: existing.averageScore || 0,
               isAdmin: true
             };
             userActivity.set(userId, data);
             if (db) {
-              await setDoc(doc(db, 'users', userId.toString()), data, { merge: true }).catch(console.error);
+              const cleanedData = { ...data };
+              Object.keys(cleanedData).forEach(key => {
+                if (cleanedData[key as keyof UserData] === undefined) {
+                  delete cleanedData[key as keyof UserData];
+                }
+              });
+              await setDoc(doc(db, 'users', userId.toString()), cleanedData, { merge: true }).catch(console.error);
             }
           }
         }
@@ -562,16 +621,22 @@ async function startServer() {
             const data: UserData = {
               ...existing as UserData,
               timestamp: Date.now(),
-              firstName: ctx.from.first_name,
-              lastName: ctx.from.last_name,
-              username: ctx.from.username,
+              firstName: ctx.from.first_name || "",
+              lastName: ctx.from.last_name || "",
+              username: ctx.from.username || "",
               testsTaken: existing.testsTaken || 0,
               averageScore: existing.averageScore || 0,
               isAdmin: true
             };
             userActivity.set(userId, data);
             if (db) {
-              await setDoc(doc(db, 'users', userId.toString()), data, { merge: true });
+              const cleanedData = { ...data };
+              Object.keys(cleanedData).forEach(key => {
+                if (cleanedData[key as keyof UserData] === undefined) {
+                  delete cleanedData[key as keyof UserData];
+                }
+              });
+              await setDoc(doc(db, 'users', userId.toString()), cleanedData, { merge: true }).catch(console.error);
             }
             return ctx.reply("🎉 Tabriklaymiz! Siz muvaffaqiyatli admin bo'ldingiz.");
           } else {
@@ -684,6 +749,7 @@ async function startServer() {
               await ctx.telegram.copyMessage(uId, ctx.chat!.id, ctx.message!.message_id);
               sentCount++;
             } catch (error) {
+              await handleBroadcastError(uId, error);
               failedCount++;
             }
           }
@@ -776,11 +842,15 @@ async function startServer() {
         for (const idStr of userIds) {
           const uId = Number(idStr);
           if (!uId || isNaN(uId)) continue;
+
+          const cachedUser = userActivity.get(uId);
+          if (cachedUser && cachedUser.isBanned) continue;
+
           try {
             await ctx.telegram.sendMessage(uId, message);
             sentCount++;
           } catch (error) {
-            console.error(`Failed to broadcast message to ${uId}:`, error);
+            await handleBroadcastError(uId, error);
             failedCount++;
           }
         }
@@ -1177,7 +1247,7 @@ async function startServer() {
           }
           sentCount++;
         } catch (error) {
-          console.error(`Failed to broadcast message to ${userId}:`, error);
+          await handleBroadcastError(userId, error);
           failedCount++;
         }
       }
