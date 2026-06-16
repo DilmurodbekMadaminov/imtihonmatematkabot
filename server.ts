@@ -193,36 +193,8 @@ async function trackUser(user: { id: number; first_name?: string; last_name?: st
 
 async function handleBroadcastError(uId: number, error: any) {
   const errMsg = String(error?.message || error?.description || '').toLowerCase();
-  const isBlockedOrNotFound = 
-    errMsg.includes('chat not found') ||
-    errMsg.includes('bot was blocked') ||
-    errMsg.includes('user is deactivated') ||
-    errMsg.includes('forbidden') ||
-    errMsg.includes('not found') ||
-    errMsg.includes('bad request');
-
-  if (isBlockedOrNotFound) {
-    console.log(`User ${uId} blocked the bot or chat was not found (banning/marking as inactive to skip future broadcasts).`);
-    // Update local cache
-    const existing = userActivity.get(uId) || {} as UserData;
-    const updated: UserData = {
-      ...existing,
-      timestamp: Date.now(),
-      isBanned: true
-    };
-    userActivity.set(uId, updated);
-    
-    // Update Firebase DB
-    if (db) {
-      try {
-        await setDoc(doc(db, 'users', uId.toString()), { isBanned: true }, { merge: true }).catch(() => {});
-      } catch (e) {
-        // silent
-      }
-    }
-  } else {
-    console.log(`Failed to broadcast message to ${uId}: ${error?.message || error}`);
-  }
+  console.log(`Failed to broadcast message to user ${uId}: ${error?.message || error}`);
+  // We no longer auto-ban users based on broadcast errors to prevent accidental blocking.
 }
 
 
@@ -278,10 +250,23 @@ async function startServer() {
     await loadCustomTests();
     try {
       const snapshot = await getDocs(collection(db, 'users'));
+      const unbanPromises: Promise<any>[] = [];
       snapshot.forEach(docSnap => {
         const data = docSnap.data() as UserData;
+        if (data.isBanned) {
+          console.log(`Auto-unbanning previously banned user ${docSnap.id} on startup.`);
+          data.isBanned = false;
+          unbanPromises.push(
+            setDoc(doc(db, 'users', docSnap.id), { isBanned: false }, { merge: true })
+              .catch(err => console.error(`Failed to unban user ${docSnap.id} in DB:`, err))
+          );
+        }
         userActivity.set(Number(docSnap.id), data);
       });
+      if (unbanPromises.length > 0) {
+        await Promise.all(unbanPromises);
+        console.log(`Unbanned ${unbanPromises.length} blocked users from Firestore.`);
+      }
       console.log(`Successfully primed cache with ${userActivity.size} users.`);
 
       // Prime candidates
@@ -1217,7 +1202,43 @@ async function startServer() {
   });
 
   // Admin APIs
-  app.get("/api/users", async (req, res) => {
+  function checkIsAdmin(telegramIdStr: string | undefined): boolean {
+    if (!telegramIdStr) return false;
+    const telegramId = Number(telegramIdStr);
+    if (isNaN(telegramId)) return false;
+
+    const envAdminId = process.env.ADMIN_ID ? Number(process.env.ADMIN_ID) : undefined;
+    if (envAdminId && telegramId === envAdminId) {
+      return true;
+    }
+
+    const userData = userActivity.get(telegramId);
+    return !!(userData && userData.isAdmin);
+  }
+
+  const requireAdmin = (req: any, res: any, next: any) => {
+    const telegramId = req.headers["x-telegram-id"] || req.query.telegramId;
+    if (!checkIsAdmin(telegramId?.toString())) {
+      return res.status(403).json({ error: "Ruxsat etilmagan! Telegram ID xato yoki admin emas." });
+    }
+    next();
+  };
+
+  app.post("/api/auth/verify-admin", async (req, res) => {
+    const { telegramId } = req.body;
+    if (!telegramId) {
+      return res.status(400).json({ error: "Telegram ID kiritilmadi" });
+    }
+    const isAd = checkIsAdmin(telegramId.toString());
+    if (isAd) {
+      const user = userActivity.get(Number(telegramId));
+      res.json({ success: true, isAdmin: true, user });
+    } else {
+      res.json({ success: false, isAdmin: false, error: "Ushbu Telegram ID adminlar ro'yxatida topilmadi!" });
+    }
+  });
+
+  app.get("/api/users", requireAdmin, async (req, res) => {
     try {
       if (db) {
         const snapshot = await getDocs(collection(db, "users"));
@@ -1241,11 +1262,11 @@ async function startServer() {
     }
   });
 
-  app.get("/api/settings", (req, res) => {
+  app.get("/api/settings", requireAdmin, (req, res) => {
     res.json(globalSettings);
   });
 
-  app.post("/api/settings", async (req, res) => {
+  app.post("/api/settings", requireAdmin, async (req, res) => {
     const { channels, hdpLink, omonLink } = req.body;
     if (!Array.isArray(channels)) {
       return res.status(400).json({ error: "channels must be an array" });
@@ -1258,11 +1279,11 @@ async function startServer() {
     }
   });
 
-  app.get("/api/tests", (req, res) => {
+  app.get("/api/tests", requireAdmin, (req, res) => {
     res.json(customTests);
   });
 
-  app.post("/api/tests", async (req, res) => {
+  app.post("/api/tests", requireAdmin, async (req, res) => {
     const { category, title, questions, sectionId } = req.body;
     if (!category || !title || !questions || !Array.isArray(questions)) {
       return res.status(400).json({ error: "Ma'lumotlar to'liq kiritilmadi" });
@@ -1294,7 +1315,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/tests/delete", async (req, res) => {
+  app.post("/api/tests/delete", requireAdmin, async (req, res) => {
     const { testId } = req.body;
     if (!testId) {
       return res.status(400).json({ error: "testId kiritilmagan" });
@@ -1310,7 +1331,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/message-user", async (req, res) => {
+  app.post("/api/message-user", requireAdmin, async (req, res) => {
     const { userId, message, imageUrl } = req.body;
     if (!userId || !message) {
       return res.status(400).json({ error: "userId and message are required" });
@@ -1330,7 +1351,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/broadcast", async (req, res) => {
+  app.post("/api/broadcast", requireAdmin, async (req, res) => {
     const { message, imageUrl } = req.body;
     if (!message || typeof message !== "string" || message.trim() === "") {
       return res.status(400).json({ error: "Message content cannot be empty" });
@@ -1385,7 +1406,7 @@ async function startServer() {
   });
 
   // Toggle Ban User API
-  app.post("/api/users/ban", async (req, res) => {
+  app.post("/api/users/ban", requireAdmin, async (req, res) => {
     const { userId, isBanned } = req.body;
     if (!userId) {
       return res.status(400).json({ error: "userId is required" });
@@ -1415,13 +1436,14 @@ async function startServer() {
   });
 
   // Get Candidates/Applicants for HR
-  app.get("/api/candidates", (req, res) => {
+  app.get("/api/candidates", requireAdmin, (req, res) => {
     res.json(Array.from(candidatesCache.values()));
   });
 
   // Update Candidate Status & optional notification feedback
-  app.post("/api/candidates/status", async (req, res) => {
-    const { candidateId, status, message } = req.body;
+  const handleCandidateStatusChange = async (req: any, res: any) => {
+    const candidateId = req.params.candidateId || req.body.candidateId;
+    const { status, message } = req.body;
     if (!candidateId || !status) {
       return res.status(400).json({ error: "candidateId and status are required" });
     }
@@ -1451,7 +1473,10 @@ async function startServer() {
     }
 
     res.json({ success: true, candidate });
-  });
+  };
+
+  app.post("/api/candidates/status", requireAdmin, handleCandidateStatusChange);
+  app.post("/api/candidates/:candidateId/status", requireAdmin, handleCandidateStatusChange);
 
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
