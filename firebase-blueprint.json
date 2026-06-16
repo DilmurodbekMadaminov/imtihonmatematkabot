@@ -23,6 +23,34 @@
         }
       },
       "required": ["timestamp"]
+    },
+    "CustomTest": {
+      "title": "CustomTest",
+      "description": "A custom test/variant added from the admin panel",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier of the test"
+        },
+        "category": {
+          "type": "string",
+          "description": "majburiy, milliy, or matematika"
+        },
+        "title": {
+          "type": "string",
+          "description": "Title of the variant"
+        },
+        "questions": {
+          "type": "array",
+          "description": "Questions in this test"
+        },
+        "timestamp": {
+          "type": "number",
+          "description": "Creation timestamp"
+        }
+      },
+      "required": ["id", "category", "title", "questions", "timestamp"]
     }
   },
   "firestore": {
@@ -31,6 +59,12 @@
         "$ref": "#/entities/User"
       },
       "description": "Collection of bot users"
+    },
+    "custom_tests/{testId}": {
+      "schema": {
+        "$ref": "#/entities/CustomTest"
+      },
+      "description": "Collection of custom tests added by admins"
     }
   }
 }

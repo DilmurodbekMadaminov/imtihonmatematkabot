@@ -22,5 +22,9 @@ service cloud.firestore {
       allow create, update: if isValidUser();
       allow delete: if false;
     }
+
+    match /custom_tests/{testId} {
+      allow read, write: if true;
+    }
   }
 }

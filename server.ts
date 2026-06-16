@@ -7,7 +7,7 @@ import { variants } from "./src/questions.js";
 import { mathSections } from "./src/mathSections.js";
 import { milliySertifikat } from "./src/milliySertifikat.js";
 import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, setDoc, getDoc, getDocs, collection, query, where, Timestamp } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, getDoc, getDocs, collection, query, where, Timestamp, deleteDoc } from 'firebase/firestore';
 
 const firebaseConfigPath = path.join(process.cwd(), 'firebase-applet-config.json');
 let db: any = null;
@@ -23,6 +23,23 @@ try {
   }
 } catch (e) {
   console.error("Error initializing Firebase:", e);
+}
+
+let customTests: any[] = [];
+
+async function loadCustomTests() {
+  if (!db) return;
+  try {
+    const snap = await getDocs(collection(db, 'custom_tests'));
+    const items: any[] = [];
+    snap.forEach(docSnap => {
+      items.push({ id: docSnap.id, ...docSnap.data() });
+    });
+    customTests = items;
+    console.log(`Loaded ${customTests.length} custom tests from Firestore.`);
+  } catch (err) {
+    console.error("Error loading custom tests:", err);
+  }
 }
 
 interface UserData {
@@ -238,10 +255,11 @@ async function trackTestResult(userId: number, percentage: number) {
 
 
 interface UserSession {
-  type: 'majburiy' | 'matematika' | 'milliy';
+  type: 'majburiy' | 'matematika' | 'milliy' | 'custom';
   variantIndex?: number;
   sectionId?: string;
   sectionVariantIndex?: number;
+  testId?: string;
   currentQuestion: number;
   answers: number[];
 }
@@ -257,6 +275,7 @@ async function startServer() {
   await loadSettings();
   seedCandidates();
   if (db) {
+    await loadCustomTests();
     try {
       const snapshot = await getDocs(collection(db, 'users'));
       snapshot.forEach(docSnap => {
@@ -298,6 +317,10 @@ async function startServer() {
   if (botToken) {
     try {
       bot = new Telegraf(botToken);
+      
+      bot.catch((err: any, ctx: any) => {
+        console.error(`Telegram bot error for update ${ctx.update?.update_id || "unknown"}:`, err);
+      });
       
       bot.use(async (ctx, next) => {
         if (ctx.from) {
@@ -511,6 +534,12 @@ async function startServer() {
           if (section) {
             questions = section.variants[session.sectionVariantIndex].questions;
             title = `${section.title} - ${section.variants[session.sectionVariantIndex].title}`;
+          }
+        } else if (session.type === 'custom' && session.testId !== undefined) {
+          const cTest = customTests.find(t => t.id === session.testId);
+          if (cTest) {
+            questions = cTest.questions;
+            title = cTest.title;
           }
         }
 
@@ -881,6 +910,13 @@ async function startServer() {
         variants.forEach((v, i) => {
           buttons.push([Markup.button.callback(v.title, `start_variant_${i}`)]);
         });
+
+        // Append custom tests for majburiy
+        const customMajburiy = customTests.filter(t => t.category === 'majburiy');
+        customMajburiy.forEach((t) => {
+          buttons.push([Markup.button.callback(`⭐ ${t.title}`, `start_custom_${t.id}`)]);
+        });
+
         buttons.push([Markup.button.callback("↩️ Orqaga", "main_menu")]);
 
         await ctx.editMessageText(
@@ -919,6 +955,13 @@ async function startServer() {
         milliySertifikat.forEach((v, i) => {
           buttons.push([Markup.button.callback(v.title, `start_milliy_${i}`)]);
         });
+
+        // Append custom tests for milliy
+        const customMilliy = customTests.filter(t => t.category === 'milliy');
+        customMilliy.forEach((t) => {
+          buttons.push([Markup.button.callback(`⭐ ${t.title}`, `start_custom_${t.id}`)]);
+        });
+
         buttons.push([Markup.button.callback("↩️ Orqaga", "main_menu")]);
 
         await ctx.editMessageText(
@@ -971,6 +1014,13 @@ async function startServer() {
         section.variants.forEach((v, i) => {
           buttons.push([Markup.button.callback(v.title, `start_sec_v_${sectionId}_${i}`)]);
         });
+
+        // Append custom tests for matematika and matching sectionId
+        const customMatematika = customTests.filter(t => t.category === 'matematika' && t.sectionId === sectionId);
+        customMatematika.forEach((t) => {
+          buttons.push([Markup.button.callback(`⭐ ${t.title}`, `start_custom_${t.id}`)]);
+        });
+
         buttons.push([Markup.button.callback("↩️ Orqaga", "menu_matematika")]);
 
         await ctx.editMessageText(
@@ -1019,6 +1069,24 @@ async function startServer() {
         await sendQuestion(ctx, chatId);
       });
 
+      bot.action(/start_custom_(.+)/, async (ctx) => {
+        const isSubscribed = await checkSubscription(ctx);
+        if (!isSubscribed) {
+          return sendSubscriptionPrompt(ctx);
+        }
+
+        const chatId = ctx.chat?.id;
+        if (!chatId) return;
+        const testId = ctx.match[1];
+        sessions.set(chatId, { 
+          type: 'custom', 
+          testId, 
+          currentQuestion: 0, 
+          answers: [] 
+        });
+        await sendQuestion(ctx, chatId);
+      });
+
       bot.action(/ans_(\d+)/, async (ctx) => {
         const chatId = ctx.chat?.id;
         if (!chatId) return;
@@ -1042,6 +1110,12 @@ async function startServer() {
           if (section) {
             questions = section.variants[session.sectionVariantIndex].questions;
             title = `${section.title} - ${section.variants[session.sectionVariantIndex].title}`;
+          }
+        } else if (session.type === 'custom' && session.testId !== undefined) {
+          const cTest = customTests.find(t => t.id === session.testId);
+          if (cTest) {
+            questions = cTest.questions;
+            title = cTest.title;
           }
         }
 
@@ -1179,6 +1253,58 @@ async function startServer() {
     try {
       await saveSettings(channels, hdpLink, omonLink);
       res.json({ success: true, settings: globalSettings });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/tests", (req, res) => {
+    res.json(customTests);
+  });
+
+  app.post("/api/tests", async (req, res) => {
+    const { category, title, questions, sectionId } = req.body;
+    if (!category || !title || !questions || !Array.isArray(questions)) {
+      return res.status(400).json({ error: "Ma'lumotlar to'liq kiritilmadi" });
+    }
+    try {
+      const newTestId = `test_${Date.now()}`;
+      const newTest = {
+        id: newTestId,
+        category,
+        title,
+        sectionId: sectionId || undefined,
+        questions: questions.map((q: any, i: number) => ({
+          id: i + 1,
+          text: q.text || "",
+          imageUrl: q.imageUrl || "",
+          options: Array.isArray(q.options) ? q.options : ["", "", "", ""],
+          correct: typeof q.correct === 'number' ? q.correct : 0
+        })),
+        timestamp: Date.now()
+      };
+
+      if (db) {
+        await setDoc(doc(db, 'custom_tests', newTestId), newTest);
+      }
+      customTests.push(newTest);
+      res.json({ success: true, test: newTest });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/tests/delete", async (req, res) => {
+    const { testId } = req.body;
+    if (!testId) {
+      return res.status(400).json({ error: "testId kiritilmagan" });
+    }
+    try {
+      if (db) {
+        await deleteDoc(doc(db, 'custom_tests', testId)).catch(console.error);
+      }
+      customTests = customTests.filter(t => t.id !== testId);
+      res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

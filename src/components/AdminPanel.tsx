@@ -63,7 +63,7 @@ export default function AdminPanel() {
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Active Keypad Tab
-  const [activeTab, setActiveTab] = useState<'stats' | 'users' | 'broadcast' | 'channels' | 'candidates'>('stats');
+  const [activeTab, setActiveTab] = useState<'stats' | 'users' | 'broadcast' | 'channels' | 'candidates' | 'tests'>('stats');
 
   // Broadcast states
   const [broadcastMessage, setBroadcastMessage] = useState("");
@@ -100,6 +100,17 @@ export default function AdminPanel() {
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState("");
   const [updatingCandidateId, setUpdatingCandidateId] = useState<string | null>(null);
+
+  // Custom tests states
+  const [customTests, setCustomTests] = useState<any[]>([]);
+  const [loadingTests, setLoadingTests] = useState(true);
+  const [isAddingTest, setIsAddingTest] = useState(false);
+  const [testCategory, setTestCategory] = useState<'majburiy' | 'milliy' | 'matematika'>('majburiy');
+  const [testTitle, setTestTitle] = useState("");
+  const [testSectionId, setTestSectionId] = useState("algebra");
+  const [testQuestions, setTestQuestions] = useState<any[]>([
+    { text: "", imageUrl: "", options: ["", "", "", ""], correct: 0 }
+  ]);
 
   const fetchUsers = async () => {
     try {
@@ -148,10 +159,26 @@ export default function AdminPanel() {
     }
   };
 
+  const fetchTests = async () => {
+    try {
+      setLoadingTests(true);
+      const res = await fetch("/api/tests");
+      if (res.ok) {
+        const data = await res.json();
+        setCustomTests(data);
+      }
+    } catch (e) {
+      console.error("Error fetching custom tests:", e);
+    } finally {
+      setLoadingTests(false);
+    }
+  };
+
   useEffect(() => {
     fetchUsers();
     fetchSettings();
     fetchCandidates();
+    fetchTests();
   }, []);
 
   const handleBroadcast = async (e: React.FormEvent) => {
@@ -733,6 +760,351 @@ export default function AdminPanel() {
             </motion.div>
           )}
 
+          {/* TAB 5: Ustoz-Shogird Kandidatlari */}
+          {activeTab === 'candidates' && (
+            <motion.div 
+               key="candidates"
+               initial={{ y: 20, opacity: 0 }}
+               animate={{ y: 0, opacity: 1 }}
+               exit={{ y: -20, opacity: 0 }}
+               transition={{ duration: 0.25 }}
+               className="space-y-4 flex-1 flex flex-col justify-between"
+            >
+               <div>
+                 <h3 className="text-sm font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider border-b border-slate-900 pb-2">
+                   <Briefcase size={16} className="text-teal-400" /> Ustoz Shogird Kandidatlari
+                 </h3>
+                 <p className="text-[10px] text-slate-500 mt-1">
+                   Bot orqali ariza topshirgan o'qituvchilar va hamkorlar ro'yxati.
+                 </p>
+               </div>
+
+               <div className="flex-1 overflow-y-auto max-h-[280px] space-y-2 pr-1 custom-scrollbar border border-slate-900 p-3 rounded-2xl">
+                 {candidates.length === 0 ? (
+                   <div className="text-center py-12">
+                     <p className="text-xs text-slate-500">Hozircha arizalar kelib tushmagan.</p>
+                   </div>
+                 ) : (
+                   candidates.map((cand) => (
+                     <div 
+                       key={cand.id} 
+                       className="p-3 bg-slate-900/60 border border-slate-850 rounded-xl flex items-center justify-between text-xs gap-4"
+                     >
+                       <div className="space-y-1">
+                         <div className="font-bold text-white flex items-center gap-1.5 flex-wrap">
+                           <span>{cand.fullName}</span>
+                           <span className={`px-1.5 py-0.5 rounded text-[8px] font-extrabold uppercase ${
+                             cand.status === 'approved' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-950' :
+                             cand.status === 'rejected' ? 'bg-red-500/10 text-red-400 border border-red-950' :
+                             'bg-amber-500/10 text-amber-400 border border-amber-950'
+                           }`}>
+                             {cand.status === 'approved' ? "Tasdiqlangan" : cand.status === 'rejected' ? "Rad etilgan" : "Kutilmoqda"}
+                           </span>
+                         </div>
+                         <div className="text-slate-400 text-[10px] flex items-center gap-3">
+                           <span>📞 {cand.phone}</span>
+                           <span>💼 {cand.role === 'teacher' ? 'O\'qituvchi' : 'Hamkor'}</span>
+                         </div>
+                         <div className="text-slate-500 text-[9px] max-w-[280px] drop-shadow-sm italic">
+                           "{cand.experience}"
+                         </div>
+                       </div>
+                       
+                       <div className="flex gap-1.5 shrink-0">
+                         <button
+                           onClick={async () => {
+                             if (!window.confirm("Tasdiqlashni xohlaysizmi?")) return;
+                             try {
+                               const r = await fetch(`/api/candidates/${cand.id}/status`, {
+                                 method: 'POST',
+                                 headers: { 'Content-Type': 'application/json' },
+                                 body: JSON.stringify({ status: 'approved' })
+                               });
+                               if (r.ok) {
+                                  setCandidates(p => p.map(c => c.id === cand.id ? { ...c, status: 'approved' } : c));
+                               }
+                             } catch(err) { console.error(err); }
+                           }}
+                           className="p-1.5 bg-emerald-950/40 border border-emerald-900 hover:bg-emerald-900 text-emerald-400 rounded-lg cursor-pointer transition duration-150"
+                           title="Tasdiqlash"
+                         >
+                           <Check size={14} />
+                         </button>
+                         <button
+                           onClick={async () => {
+                             if (!window.confirm("Rad etishni xohlaysizmi?")) return;
+                             try {
+                               const r = await fetch(`/api/candidates/${cand.id}/status`, {
+                                 method: 'POST',
+                                 headers: { 'Content-Type': 'application/json' },
+                                 body: JSON.stringify({ status: 'rejected' })
+                               });
+                               if (r.ok) {
+                                  setCandidates(p => p.map(c => c.id === cand.id ? { ...c, status: 'rejected' } : c));
+                               }
+                             } catch(err) { console.error(err); }
+                           }}
+                           className="p-1.5 bg-red-950/40 border border-red-950 hover:bg-red-905 text-red-405 rounded-lg cursor-pointer transition duration-150"
+                           title="Rad etish"
+                         >
+                           <X size={14} />
+                         </button>
+                       </div>
+                     </div>
+                   ))
+                 )}
+               </div>
+            </motion.div>
+          )}
+
+          {/* TAB 6: Test Savollari Boshqaruvi */}
+          {activeTab === 'tests' && (
+            <motion.div 
+               key="tests"
+               initial={{ y: 20, opacity: 0 }}
+               animate={{ y: 0, opacity: 1 }}
+               exit={{ y: -20, opacity: 0 }}
+               transition={{ duration: 0.25 }}
+               className="space-y-4 flex-1 flex flex-col justify-between"
+            >
+               <div>
+                 <div className="flex justify-between items-center border-b border-slate-900 pb-2">
+                   <h3 className="text-sm font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider">
+                     <BookOpen size={16} className="text-indigo-400" /> Test Savollari Boshqaruvi
+                   </h3>
+                   <button
+                     onClick={() => setIsAddingTest(!isAddingTest)}
+                     className="bg-indigo-600 hover:bg-indigo-505 text-white font-extrabold px-3 py-1.5 rounded-lg text-xs transition duration-150 flex items-center gap-1 cursor-pointer"
+                   >
+                     {isAddingTest ? <X size={14} /> : <Plus size={14} />}
+                     <span>{isAddingTest ? "Bekor qilish" : "Yangi Test"}</span>
+                   </button>
+                 </div>
+               </div>
+
+               {isAddingTest ? (
+                 <form onSubmit={async (e) => {
+                   e.preventDefault();
+                   if (!testTitle.trim()) {
+                     alert("Sarlavhani kiriting!");
+                     return;
+                   }
+                   for (const q of testQuestions) {
+                     if (!q.text.trim()) {
+                       alert("Savol matnini kiriting!");
+                       return;
+                     }
+                   }
+                   try {
+                     const r = await fetch("/api/tests", {
+                       method: 'POST',
+                       headers: { 'Content-Type': 'application/json' },
+                       body: JSON.stringify({
+                         category: testCategory,
+                         title: testTitle,
+                         sectionId: testCategory === 'matematika' ? testSectionId : undefined,
+                         questions: testQuestions
+                       })
+                     });
+                     if (r.ok) {
+                       alert("Test muvaffaqiyatli saqlandi va botga joylandi!");
+                       setTestTitle("");
+                       setTestQuestions([{ text: "", imageUrl: "", options: ["", "", "", ""], correct: 0 }]);
+                       setIsAddingTest(false);
+                       fetchTests();
+                     } else {
+                       alert("Saqlashda xatolik yuz berdi");
+                     }
+                   } catch(err) { console.error(err); }
+                 }} className="space-y-4 overflow-y-auto max-h-[280px] pr-1 scrollbar-thin">
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                     <div className="space-y-1">
+                       <label className="text-slate-400 font-bold block">Sarlavha (masalan: 12-Variant)</label>
+                       <input
+                         type="text"
+                         value={testTitle}
+                         onChange={(e) => setTestTitle(e.target.value)}
+                         placeholder="Test variant nomi..."
+                         className="w-full bg-slate-900 border border-slate-800 focus:border-indigo-500 rounded-lg p-2 text-white outline-none"
+                         required
+                       />
+                     </div>
+                     <div className="space-y-1">
+                       <label className="text-slate-400 font-bold block">Kategoriya</label>
+                       <select
+                         value={testCategory}
+                         onChange={(e) => setTestCategory(e.target.value as any)}
+                         className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-white outline-none"
+                       >
+                         <option value="majburiy">📕 Majburiy Matematika</option>
+                         <option value="milliy">🎓 Milliy Sertifikat</option>
+                         <option value="matematika">🧮 Ixtisoslashtirilgan Matematika</option>
+                       </select>
+                     </div>
+                   </div>
+
+                   {testCategory === 'matematika' && (
+                     <div className="space-y-1 text-xs">
+                       <label className="text-slate-400 font-bold block">Matematika Bo'limi</label>
+                       <select
+                         value={testSectionId}
+                         onChange={(e) => setTestSectionId(e.target.value)}
+                         className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-white outline-none"
+                       >
+                         <option value="algebra">📁 Algebra</option>
+                         <option value="geometriya">📁 Geometriya</option>
+                         <option value="trigonometriya">📁 Trigonometriya</option>
+                         <option value="matematik_analiz">📁 Matematik Analiz</option>
+                       </select>
+                     </div>
+                   )}
+
+                   <div className="border-t border-slate-850 pt-3 space-y-4">
+                     <div className="flex justify-between items-center">
+                       <h4 className="text-xs font-bold text-slate-300">Savollar ({testQuestions.length} ta)</h4>
+                       <button
+                         type="button"
+                         onClick={() => setTestQuestions(p => [...p, { text: "", imageUrl: "", options: ["", "", "", ""], correct: 0 }])}
+                         className="bg-slate-800 hover:bg-slate-700 text-slate-200 px-2 py-1 rounded text-[10px] font-bold transition duration-150 flex items-center gap-1 cursor-pointer"
+                       >
+                         <Plus size={12} /> Savol qo'shish
+                       </button>
+                     </div>
+
+                     {testQuestions.map((q, qIndex) => (
+                       <div key={qIndex} className="bg-slate-900/40 border border-slate-850 p-3 rounded-xl space-y-3 text-xs relative">
+                         <div className="flex justify-between items-center text-[10px] font-bold text-slate-400">
+                           <span>Savol #{qIndex + 1}</span>
+                           {testQuestions.length > 1 && (
+                             <button
+                               type="button"
+                               onClick={() => setTestQuestions(p => p.filter((_, idx) => idx !== qIndex))}
+                               className="text-red-400 hover:text-red-300 transition"
+                             >
+                               O'chirish
+                             </button>
+                           )}
+                         </div>
+
+                         <div className="space-y-1">
+                           <label className="text-[10px] text-slate-505 font-bold">Savol matni</label>
+                           <textarea
+                             value={q.text}
+                             onChange={(e) => setTestQuestions(p => p.map((item, idx) => idx === qIndex ? { ...item, text: e.target.value } : item))}
+                             placeholder="Masalan: Tenglamani yeching: 2x + 5 = 15"
+                             className="w-full bg-slate-900 border border-slate-800 focus:border-indigo-500 rounded-lg p-2 text-slate-200 outline-none"
+                             rows={2}
+                             required
+                           />
+                         </div>
+
+                         <div className="space-y-1">
+                           <label className="text-[10px] text-slate-505 font-bold block">Rasm havolasi (ixtiyoriy)</label>
+                           <input
+                             type="url"
+                             value={q.imageUrl || ""}
+                             onChange={(e) => setTestQuestions(p => p.map((item, idx) => idx === qIndex ? { ...item, imageUrl: e.target.value } : item))}
+                             placeholder="https://..."
+                             className="w-full bg-slate-900 border border-slate-800 rounded-lg p-1.5 text-xs text-white outline-none"
+                           />
+                         </div>
+
+                         <div className="grid grid-cols-2 gap-2">
+                           {q.options.map((opt: string, optIdx: number) => (
+                             <div key={optIdx} className="space-y-1">
+                               <label className="text-[9px] text-slate-500 font-bold">{String.fromCharCode(65 + optIdx)} Variant</label>
+                               <input
+                                 type="text"
+                                 value={opt}
+                                 onChange={(e) => setTestQuestions(p => p.map((item, idx) => {
+                                   if (idx !== qIndex) return item;
+                                   const nextOpt = [...item.options];
+                                   nextOpt[optIdx] = e.target.value;
+                                   return { ...item, options: nextOpt };
+                                 }))}
+                                 placeholder="Javob matni..."
+                                 className="w-full bg-slate-900 border border-slate-800 rounded-lg p-1.5 text-white outline-none"
+                                 required
+                               />
+                             </div>
+                           ))}
+                         </div>
+
+                         <div className="space-y-1">
+                           <label className="text-[9px] text-slate-500 font-bold block">To'g'ri javob</label>
+                           <select
+                             value={q.correct}
+                             onChange={(e) => setTestQuestions(p => p.map((item, idx) => idx === qIndex ? { ...item, correct: parseInt(e.target.value) } : item))}
+                             className="w-full bg-slate-900 border border-slate-800 rounded-lg p-1.5 text-white outline-none"
+                           >
+                             <option value={0}>A Variant</option>
+                             <option value={1}>B Variant</option>
+                             <option value={2}>C Variant</option>
+                             <option value={3}>D Variant</option>
+                           </select>
+                         </div>
+                       </div>
+                     ))}
+                   </div>
+
+                   <button
+                     type="submit"
+                     className="w-full bg-slate-100 hover:bg-white text-slate-900 font-black py-2.5 rounded-xl text-xs transition active:scale-95 cursor-pointer"
+                   >
+                     Test Variantini Saqlash
+                   </button>
+                 </form>
+               ) : (
+                 <div className="flex-1 overflow-y-auto max-h-[280px] space-y-2 pr-1 custom-scrollbar border border-slate-900 p-3 rounded-2xl">
+                   {loadingTests ? (
+                     <div className="flex justify-center items-center py-12">
+                       <RefreshCw className="animate-spin text-slate-500" size={18} />
+                     </div>
+                   ) : customTests.length === 0 ? (
+                     <p className="text-xs text-slate-500 text-center py-8">Hozircha qo'shimcha testlar kiritilmagan.</p>
+                   ) : (
+                     customTests.map((t) => (
+                       <div key={t.id} className="p-3 bg-slate-900/60 border border-slate-850 rounded-xl flex items-center justify-between text-xs gap-3">
+                         <div>
+                           <div className="font-bold text-white flex items-center gap-1.5 flex-wrap">
+                             <span>{t.title}</span>
+                             <span className="px-1.5 py-0.5 rounded text-[8px] font-extrabold uppercase bg-indigo-500/10 text-indigo-400 border border-indigo-950">
+                               {t.category === 'majburiy' ? 'Majburiy' : t.category === 'milliy' ? 'Milliy' : `Ixtisoslik (${t.sectionId})`}
+                             </span>
+                           </div>
+                           <div className="text-slate-500 text-[9px] mt-1 flex items-center gap-2">
+                             <span>📄 {t.questions.length} ta savol</span>
+                             <span>•</span>
+                             <span>📅 {new Date(t.timestamp).toLocaleDateString()}</span>
+                           </div>
+                         </div>
+                         <button
+                           onClick={async () => {
+                             if (!window.confirm("Rostdan o'chirilsinmi?")) return;
+                             try {
+                               const r = await fetch("/api/tests/delete", {
+                                 method: 'POST',
+                                 headers: { 'Content-Type': 'application/json' },
+                                 body: JSON.stringify({ testId: t.id })
+                               });
+                               if (r.ok) {
+                                 setCustomTests(prev => prev.filter(item => item.id !== t.id));
+                               }
+                             } catch(err) { console.error(err); }
+                           }}
+                           className="p-1.5 bg-slate-950/40 border border-slate-850 hover:border-red-900 hover:text-red-400 text-slate-400 rounded-lg cursor-pointer transition duration-150"
+                           title="O'chirish"
+                         >
+                           <Trash size={14} />
+                         </button>
+                       </div>
+                     ))
+                   )}
+                 </div>
+               )}
+            </motion.div>
+          )}
+
 
 
         </AnimatePresence>
@@ -745,7 +1117,7 @@ export default function AdminPanel() {
           🎛️ Boshqaruv Kalkulyator Tugmachalari
         </label>
         
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
           
           <button
             onClick={() => setActiveTab('stats')}
@@ -785,14 +1157,38 @@ export default function AdminPanel() {
 
           <button
             onClick={() => setActiveTab('channels')}
-            className={`py-3.5 px-3 rounded-xl font-bold text-xs transition duration-150 flex flex-col items-center justify-center gap-1.5 border cursor-pointer active:scale-95 col-span-2 md:col-span-1 ${
+            className={`py-3.5 px-3 rounded-xl font-bold text-xs transition duration-150 flex flex-col items-center justify-center gap-1.5 border cursor-pointer active:scale-95 ${
               activeTab === 'channels'
                 ? 'bg-indigo-600/[0.15] border-indigo-500 text-indigo-300 shadow-lg shadow-indigo-950'
                 : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
             }`}
           >
             <Layers size={18} />
-            <span>Sponsor Kanallar</span>
+            <span>Kanallar</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('candidates')}
+            className={`py-3.5 px-3 rounded-xl font-bold text-xs transition duration-150 flex flex-col items-center justify-center gap-1.5 border cursor-pointer active:scale-95 ${
+              activeTab === 'candidates'
+                ? 'bg-indigo-600/[0.15] border-indigo-500 text-indigo-300 shadow-lg shadow-indigo-950'
+                : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
+            }`}
+          >
+            <Briefcase size={18} />
+            <span>Kandidatlar</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('tests')}
+            className={`py-3.5 px-3 rounded-xl font-bold text-xs transition duration-150 flex flex-col items-center justify-center gap-1.5 border cursor-pointer active:scale-95 col-span-2 lg:col-span-1 ${
+              activeTab === 'tests'
+                ? 'bg-indigo-600/[0.15] border-indigo-500 text-indigo-300 shadow-lg shadow-indigo-950'
+                : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
+            }`}
+          >
+            <BookOpen size={18} />
+            <span>Testlar</span>
           </button>
 
         </div>
