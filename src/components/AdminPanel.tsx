@@ -396,7 +396,7 @@ export default function AdminPanel() {
           </span>
           <h2 className="text-xl md:text-2xl font-extrabold text-white tracking-tight flex items-center gap-2">
             <Shield className="text-indigo-500" size={22} />
-            HR & Bot Admin Paneli
+            Bot Admin Paneli
           </h2>
         </div>
         <button 
@@ -449,32 +449,12 @@ export default function AdminPanel() {
                     <div className="text-[10px] text-slate-400 mt-1">Umumiy o'zlashtirish</div>
                   </div>
 
-                  <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800/60 hover:border-slate-750 transition-all">
-                    <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Arizalar (HR)</div>
-                    <div className="text-2xl font-extrabold text-amber-400 mt-1">{candidates.length} ta</div>
-                    <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span> {pendingCandidatesCount} ta kutilmoqda
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800/60 hover:border-slate-750 transition-all">
-                    <div className="text-[10px] text-indigo-400 font-bold uppercase tracking-wider">HDP LC Bosilgan</div>
-                    <div className="text-2xl font-extrabold text-indigo-300 mt-1">{totalHdp} marta</div>
-                    <div className="text-[10px] text-slate-400 mt-1">Ariza havolasi bosildi</div>
-                  </div>
-
-                  <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800/60 hover:border-slate-750 transition-all">
-                    <div className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider">Omon School Bosilgan</div>
-                    <div className="text-2xl font-extrabold text-emerald-300 mt-1">{totalOmon} marta</div>
-                    <div className="text-[10px] text-slate-400 mt-1">Ariza havolasi bosildi</div>
-                  </div>
-
                 </div>
               </div>
 
               <div className="bg-slate-900/40 p-4 rounded-xl border border-slate-850/80 text-xs text-slate-400 mt-4 leading-relaxed">
                 <span className="font-bold text-white block mb-1">💡 Yo'riqnoma:</span>
-                Ushbu Admin paneli maxsus bot arxitekturasi asosida tayyorlandi. Pastdagi kalkulyator tugmachalari orqali xabar yozish, majburiy kanallarni boshqarish, a'zolarni bloklash va kelgan rezyume (ariza)larni batafsil tahlil qilishingiz mumkin.
+                Ushbu Admin paneli maxsus bot arxitekturasi asosida tayyorlandi. Pastdagi kalkulyator tugmachalari orqali xabar yozish, majburiy kanallarni boshqarish va a'zolarni bloklash bilan tizimni to'liq nazorat qilishingiz mumkin.
               </div>
             </motion.div>
           )}
@@ -723,34 +703,6 @@ export default function AdminPanel() {
                     </button>
                   </div>
 
-                  <div className="border-t border-slate-900 pt-2.5 mt-1 space-y-2">
-                    <div>
-                      <label className="text-[9px] uppercase font-bold text-slate-500 block mb-0.5">
-                        HDP LC Ariza Linki:
-                      </label>
-                      <input
-                        type="url"
-                        value={settings.hdpLink || ""}
-                        onChange={(e) => setSettings(prev => ({ ...prev, hdpLink: e.target.value }))}
-                        className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-white font-semibold"
-                        placeholder="https://forms.gle/..."
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-[9px] uppercase font-bold text-slate-500 block mb-0.5">
-                        Omon School Ariza Linki:
-                      </label>
-                      <input
-                        type="url"
-                        value={settings.omonLink || ""}
-                        onChange={(e) => setSettings(prev => ({ ...prev, omonLink: e.target.value }))}
-                        className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-white font-semibold"
-                        placeholder="https://forms.gle/..."
-                      />
-                    </div>
-                  </div>
-
                   <button
                     type="button"
                     onClick={saveChannelSettings}
@@ -781,76 +733,7 @@ export default function AdminPanel() {
             </motion.div>
           )}
 
-          {/* TAB 5: Arizalar / Candidates */}
-          {activeTab === 'candidates' && (
-            <motion.div 
-              key="candidates"
-              initial={{ y: 20, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: -20, opacity: 0 }}
-              transition={{ duration: 0.25 }}
-              className="space-y-4 flex-1 flex flex-col justify-between"
-            >
-              <div className="space-y-3">
-                <div className="flex items-center justify-between border-b border-slate-900 pb-2">
-                  <h3 className="text-sm font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider">
-                    <Briefcase size={16} className="text-indigo-400" /> Arizalar va Rezyumelar (HR)
-                  </h3>
-                  <span className="bg-amber-950/80 border border-amber-900 text-amber-400 font-bold text-[9px] px-2 py-0.5 rounded-full uppercase tracking-wider">
-                    {pendingCandidatesCount} ta kutilmoqda
-                  </span>
-                </div>
 
-                <div className="max-h-[220px] overflow-y-auto border border-slate-900 rounded-xl divide-y divide-slate-900 custom-scrollbar">
-                  {loadingCandidates ? (
-                    <div className="py-12 text-center text-xs text-slate-500">
-                      Arizalar yuklanmoqda...
-                    </div>
-                  ) : candidates.length === 0 ? (
-                    <div className="py-12 text-center text-xs text-slate-500">
-                      Kelib tushgan arizalar mavjud emas.
-                    </div>
-                  ) : (
-                    candidates.map((cand) => (
-                      <div key={cand.id} className="p-3 hover:bg-slate-900/40 flex items-center justify-between text-xs transition gap-4">
-                        <div className="min-w-0 flex-1">
-                          <div className="font-bold text-slate-250 flex items-center gap-2 truncate">
-                            {cand.fullName}
-                            <span className={`px-1.5 py-0.2 rounded text-[8px] font-bold border uppercase ${
-                              cand.status === 'approved' 
-                                ? 'bg-emerald-950 text-emerald-400 border-emerald-900' 
-                                : cand.status === 'rejected'
-                                ? 'bg-red-950 text-red-400 border-red-900'
-                                : 'bg-amber-950 text-amber-400 border-amber-900'
-                            }`}>
-                              {cand.status === 'approved' ? "Tasdiqlangan" : cand.status === 'rejected' ? "Rad etilgan" : "Kutilmoqda"}
-                            </span>
-                          </div>
-                          <div className="text-[10px] text-slate-400 mt-1 flex flex-wrap gap-x-3 gap-y-1">
-                            <span className="flex items-center gap-0.5"><GraduationCap size={11} className="text-indigo-400" /> {cand.direction}</span>
-                            <span className="flex items-center gap-0.5"><Phone size={11} className="text-indigo-400" /> {cand.phone}</span>
-                            <span className="font-mono bg-slate-900 px-1 py-0.2 rounded text-[9px] text-slate-300">Skor: {cand.score}%</span>
-                          </div>
-                          <div className="text-[10px] text-slate-500 italic mt-1 line-clamp-1">Tajriba: {cand.experience}</div>
-                        </div>
-                        <div className="flex items-center gap-1.5 flex-shrink-0">
-                          <button
-                            onClick={() => {
-                              setSelectedCandidate(cand);
-                              setFeedbackMessage("");
-                            }}
-                            className="bg-indigo-950 hover:bg-indigo-900 text-indigo-300 font-bold px-2 py-1 rounded text-[10px] transition"
-                          >
-                            Batafsil
-                          </button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </motion.div>
-          )}
 
         </AnimatePresence>
 
@@ -862,7 +745,7 @@ export default function AdminPanel() {
           🎛️ Boshqaruv Kalkulyator Tugmachalari
         </label>
         
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           
           <button
             onClick={() => setActiveTab('stats')}
@@ -902,7 +785,7 @@ export default function AdminPanel() {
 
           <button
             onClick={() => setActiveTab('channels')}
-            className={`py-3.5 px-3 rounded-xl font-bold text-xs transition duration-150 flex flex-col items-center justify-center gap-1.5 border cursor-pointer active:scale-95 ${
+            className={`py-3.5 px-3 rounded-xl font-bold text-xs transition duration-150 flex flex-col items-center justify-center gap-1.5 border cursor-pointer active:scale-95 col-span-2 md:col-span-1 ${
               activeTab === 'channels'
                 ? 'bg-indigo-600/[0.15] border-indigo-500 text-indigo-300 shadow-lg shadow-indigo-950'
                 : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
@@ -910,21 +793,6 @@ export default function AdminPanel() {
           >
             <Layers size={18} />
             <span>Sponsor Kanallar</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('candidates')}
-            className={`py-3.5 px-3 rounded-xl font-bold text-xs transition duration-150 flex flex-col items-center justify-center gap-1.5 border cursor-pointer relative active:scale-95 col-span-2 md:col-span-1 ${
-              activeTab === 'candidates'
-                ? 'bg-indigo-600/[0.15] border-indigo-500 text-indigo-300 shadow-lg shadow-indigo-950'
-                : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
-            }`}
-          >
-            <Briefcase size={18} />
-            <span>Nomzodlar</span>
-            {pendingCandidatesCount > 0 && (
-              <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
-            )}
           </button>
 
         </div>

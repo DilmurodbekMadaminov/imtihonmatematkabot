@@ -496,6 +496,40 @@ async function startServer() {
         );
       });
 
+      const formatChannelLink = (channel: string) => {
+        if (!channel) return "";
+        const s = channel.trim();
+        if (s.startsWith("http://") || s.startsWith("https://")) return s;
+        if (s.startsWith("@")) return `https://t.me/${s.substring(1)}`;
+        return `https://t.me/${s}`;
+      };
+
+      const getAdminKeyboard = () => {
+        return Markup.inlineKeyboard([
+          [Markup.button.callback("✏️ Kanalni o'zgartirish", "edit_channels")],
+          [Markup.button.callback("✏️ HDP silkani o'zgartirish", "edit_hdp_link")],
+          [Markup.button.callback("✏️ Omon silkani o'zgartirish", "edit_omon_link")],
+          [Markup.button.callback("📢 Xabar tarqatish", "edit_broadcast")],
+          [Markup.button.callback("❌ Bekor qilish", "cancel_admin")]
+        ]);
+      };
+
+      const getAdminStatusMessage = () => {
+        const totalUsers = userActivity.size;
+        const totalHdp = Array.from(userActivity.values()).reduce((sum, u: any) => sum + (u.hdp || 0), 0);
+        const totalOmon = Array.from(userActivity.values()).reduce((sum, u: any) => sum + (u.omon || 0), 0);
+        const channelLink = formatChannelLink(globalSettings.channelUsername);
+
+        return `📊 *Statistika:*\n\n` +
+          `👥 Foydalanuvchilar: ${totalUsers}\n\n` +
+          `🔷 HDP LC bosilgan: ${totalHdp}\n` +
+          `🔷 Omon School bosilgan: ${totalOmon}\n\n` +
+          `⚙️ *Joriy sozlamalar:*\n` +
+          `Kanal: ${channelLink}\n` +
+          `HDP Link: ${globalSettings.hdpLink || ""}\n` +
+          `Omon Link: ${globalSettings.omonLink || ""}`;
+      };
+
       bot.command('admin', async (ctx) => {
         const userId = ctx.from?.id;
         if (!userId) return;
@@ -553,13 +587,205 @@ async function startServer() {
           return ctx.reply("🔒 Boshqaruv ruxsati berilmagan. Adminlik huquqini faollashtirish uchun parolni kiriting:\n\n`/admin [parol]`");
         }
 
-        const text = `👨‍💼 *Admin Boshqaruv Oynasi*\n\n` +
-          `🔔 *Xabar yuborish:*\n` +
-          `Barcha a'zolarga xabar yuborish uchun:\n` +
-          `\`/broadcast <xabar matni>\``;
+        await ctx.reply(getAdminStatusMessage(), {
+          parse_mode: "Markdown",
+          ...getAdminKeyboard()
+        });
+      });
 
-        await ctx.reply(text, {
-          parse_mode: "Markdown"
+      bot.action('edit_channels', async (ctx) => {
+        const userId = ctx.from?.id;
+        if (!userId) return ctx.answerCbQuery();
+        const userData = userActivity.get(userId);
+        if (!userData || !userData.isAdmin) {
+          return ctx.answerCbQuery("🔒 Siz admin emassiz!", { show_alert: true });
+        }
+
+        adminState.set(userId, "awaiting_channels");
+        await ctx.reply(
+          "✏️ Yangi hamkor kanali havolasi yoki foydalanuvchi nomini yuboring (masalan: @DilnuraMadaminova yoki https://t.me/Xorazm_ish_elon_uz):\n\n⚠️ Diqqat: @DilnuraMadaminova kanali tizim tomonidan avtomatik qo'shiladi.",
+          Markup.inlineKeyboard([[Markup.button.callback("❌ Bekor qilish", "cancel_admin")]])
+        );
+        await ctx.answerCbQuery();
+      });
+
+      bot.action('edit_hdp_link', async (ctx) => {
+        const userId = ctx.from?.id;
+        if (!userId) return ctx.answerCbQuery();
+        const userData = userActivity.get(userId);
+        if (!userData || !userData.isAdmin) {
+          return ctx.answerCbQuery("🔒 Siz admin emassiz!", { show_alert: true });
+        }
+
+        adminState.set(userId, "awaiting_hdp_link");
+        await ctx.reply(
+          "✏️ HDP LC uchun yangi ariza havolasini (URL) yuboring:\n(Masalan: https://forms.gle/...)",
+          Markup.inlineKeyboard([[Markup.button.callback("❌ Bekor qilish", "cancel_admin")]])
+        );
+        await ctx.answerCbQuery();
+      });
+
+      bot.action('edit_omon_link', async (ctx) => {
+        const userId = ctx.from?.id;
+        if (!userId) return ctx.answerCbQuery();
+        const userData = userActivity.get(userId);
+        if (!userData || !userData.isAdmin) {
+          return ctx.answerCbQuery("🔒 Siz admin emassiz!", { show_alert: true });
+        }
+
+        adminState.set(userId, "awaiting_omon_link");
+        await ctx.reply(
+          "✏️ Omon School uchun yangi ariza havolasini (URL) yuboring:\n(Masalan: https://forms.gle/...)",
+          Markup.inlineKeyboard([[Markup.button.callback("❌ Bekor qilish", "cancel_admin")]])
+        );
+        await ctx.answerCbQuery();
+      });
+
+      bot.action('edit_broadcast', async (ctx) => {
+        const userId = ctx.from?.id;
+        if (!userId) return ctx.answerCbQuery();
+        const userData = userActivity.get(userId);
+        if (!userData || !userData.isAdmin) {
+          return ctx.answerCbQuery("🔒 Siz admin emassiz!", { show_alert: true });
+        }
+
+        adminState.set(userId, "awaiting_broadcast_msg");
+        await ctx.reply(
+          "📢 Barcha a'zolarga tarqatiladigan reklama xabarini (matn, rasm, video yoki istalgan turdagi fayl/stiker) yuboring.",
+          Markup.inlineKeyboard([[Markup.button.callback("❌ Bekor qilish", "cancel_admin")]])
+        );
+        await ctx.answerCbQuery();
+      });
+
+      bot.action('cancel_admin', async (ctx) => {
+        const userId = ctx.from?.id;
+        if (!userId) return ctx.answerCbQuery();
+        adminState.delete(userId);
+        await ctx.reply("❌ Joriy adminlik amali bekor qilindi.");
+        await ctx.answerCbQuery("Amallar bekor qilindi");
+      });
+
+      // Handle Admin states
+      bot.on('message', async (ctx, next) => {
+        const userId = ctx.from?.id;
+        if (!userId) return next();
+
+        const state = adminState.get(userId);
+        if (!state) return next();
+
+        const userData = userActivity.get(userId);
+        const envAdminId = process.env.ADMIN_ID ? Number(process.env.ADMIN_ID) : undefined;
+        const isAdmin = (envAdminId && userId === envAdminId) || (userData && userData.isAdmin);
+
+        if (!isAdmin) {
+          adminState.delete(userId);
+          return next();
+        }
+
+        if (state === "awaiting_broadcast_msg") {
+          adminState.delete(userId);
+          await ctx.reply("⏳ Reklama / Xabar barcha foydalanuvchilarga tarqatilmoqda, kuting...");
+
+          let userIds: string[] = [];
+          if (db) {
+            try {
+              const snapshot = await getDocs(collection(db, "users"));
+              snapshot.forEach(docSnap => {
+                userIds.push(docSnap.id);
+              });
+            } catch (e) {
+              console.error("Database connection error in broadcast:", e);
+              userIds = Array.from(userActivity.keys()).map(id => id.toString());
+            }
+          } else {
+            userIds = Array.from(userActivity.keys()).map(id => id.toString());
+          }
+
+          if (userIds.length === 0) {
+            return ctx.reply("❌ Foydalanuvchilar topilmadi.");
+          }
+
+          let sentCount = 0;
+          let failedCount = 0;
+
+          for (const idStr of userIds) {
+            const uId = Number(idStr);
+            if (!uId || isNaN(uId)) continue;
+            
+            const cachedUser = userActivity.get(uId);
+            if (cachedUser && cachedUser.isBanned) continue;
+
+            try {
+              await ctx.telegram.copyMessage(uId, ctx.chat!.id, ctx.message!.message_id);
+              sentCount++;
+            } catch (error) {
+              failedCount++;
+            }
+          }
+
+          await ctx.reply(`✅ Reklama tarqatish yakunlandi:\n\n• Muvaffaqiyatli: *${sentCount}* ta\n• Muvaffaqiyatsiz: *${failedCount}* ta`, { parse_mode: "Markdown" });
+          
+          return ctx.reply(getAdminStatusMessage(), {
+            parse_mode: "Markdown",
+            ...getAdminKeyboard()
+          });
+        }
+
+        const text = (ctx.message as any).text;
+        if (!text) {
+          return ctx.reply("⚠️ Iltimos, faqat matnli ma'lumot yuboring!");
+        }
+
+        if (state === "awaiting_channels") {
+          adminState.delete(userId);
+          const parts = text.split(',').map((p: string) => {
+            let s = p.trim();
+            if (s.includes("t.me/")) {
+              const match = s.match(/t\.me\/([a-zA-Z0-9_]+)/);
+              if (match && match[1]) {
+                s = "@" + match[1];
+              }
+            }
+            if (!s.startsWith('@') && !s.startsWith('-') && !s.slice(0, 10).includes('://')) {
+              s = '@' + s;
+            }
+            return s;
+          }).filter(Boolean);
+
+          const mandatoryChannel = '@DilnuraMadaminova';
+          if (!parts.some((ch: string) => ch.toLowerCase() === mandatoryChannel.toLowerCase())) {
+            parts.push(mandatoryChannel);
+          }
+
+          try {
+            await saveSettings(parts, globalSettings.hdpLink, globalSettings.omonLink);
+            await ctx.reply(`✅ Kanallar muvaffaqiyatli yangilandi!\n\nJoriy ro'yxat: ${parts.join(', ')}`);
+          } catch (e: any) {
+            await ctx.reply(`❌ Xatolik yuz berdi: ${e.message}`);
+          }
+        } else if (state === "awaiting_hdp_link") {
+          adminState.delete(userId);
+          const url = text.trim();
+          try {
+            await saveSettings(globalSettings.channels, url, globalSettings.omonLink);
+            await ctx.reply(`✅ HDP LC havolasi muvaffaqiyatli yangilandi!\n\nHavola: ${url}`);
+          } catch (e: any) {
+            await ctx.reply(`❌ Xatolik yuz berdi: ${e.message}`);
+          }
+        } else if (state === "awaiting_omon_link") {
+          adminState.delete(userId);
+          const url = text.trim();
+          try {
+            await saveSettings(globalSettings.channels, globalSettings.hdpLink, url);
+            await ctx.reply(`✅ Omon School havolasi muvaffaqiyatli yangilandi!\n\nHavola: ${url}`);
+          } catch (e: any) {
+            await ctx.reply(`❌ Xatolik yuz berdi: ${e.message}`);
+          }
+        }
+
+        return ctx.reply(getAdminStatusMessage(), {
+          parse_mode: "Markdown",
+          ...getAdminKeyboard()
         });
       });
 
