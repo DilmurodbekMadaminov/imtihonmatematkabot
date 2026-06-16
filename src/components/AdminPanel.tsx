@@ -52,6 +52,8 @@ interface Candidate {
 interface ChannelSettings {
   channelUsername: string;
   channels: string[];
+  hdpLink?: string;
+  omonLink?: string;
 }
 
 export default function AdminPanel() {
@@ -76,7 +78,9 @@ export default function AdminPanel() {
   // Channel settings states
   const [settings, setSettings] = useState<ChannelSettings>({
     channelUsername: "@dilmurodbekmatematika",
-    channels: ["@dilmurodbekmatematika", "@DilnuraMadaminova"]
+    channels: ["@dilmurodbekmatematika", "@DilnuraMadaminova"],
+    hdpLink: "https://forms.gle/f6ZiQtiqCAH1CLy87",
+    omonLink: "https://forms.gle/97m9hCsBFovYKKrX7"
   });
   const [loadingSettings, setLoadingSettings] = useState(true);
   const [newChannel, setNewChannel] = useState("");
@@ -319,7 +323,11 @@ export default function AdminPanel() {
       const res = await fetch("/api/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ channels: settings.channels })
+        body: JSON.stringify({ 
+          channels: settings.channels,
+          hdpLink: settings.hdpLink,
+          omonLink: settings.omonLink
+        })
       });
       if (res.ok) {
         setSettingsSuccess(true);
@@ -367,6 +375,9 @@ export default function AdminPanel() {
   const averageScore = users.length > 0
     ? Math.round(users.reduce((acc, curr) => acc + (curr.averageScore || 0), 0) / users.length)
     : 0;
+
+  const totalHdp = users.reduce((acc, curr: any) => acc + (curr.hdp || 0), 0);
+  const totalOmon = users.reduce((acc, curr: any) => acc + (curr.omon || 0), 0);
 
   const pendingCandidatesCount = candidates.filter(c => c.status === 'pending').length;
 
@@ -416,7 +427,7 @@ export default function AdminPanel() {
                 <h3 className="text-sm font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider mb-4 border-b border-slate-900 pb-2">
                   <Activity size={16} className="text-indigo-400" /> Tizim Statistikasi & Holati
                 </h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                   
                   <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800/60 hover:border-slate-750 transition-all">
                     <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">A'zolar</div>
@@ -439,11 +450,23 @@ export default function AdminPanel() {
                   </div>
 
                   <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800/60 hover:border-slate-750 transition-all">
-                    <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Arizalar</div>
+                    <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Arizalar (HR)</div>
                     <div className="text-2xl font-extrabold text-amber-400 mt-1">{candidates.length} ta</div>
                     <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
                       <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span> {pendingCandidatesCount} ta kutilmoqda
                     </div>
+                  </div>
+
+                  <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800/60 hover:border-slate-750 transition-all">
+                    <div className="text-[10px] text-indigo-400 font-bold uppercase tracking-wider">HDP LC Bosilgan</div>
+                    <div className="text-2xl font-extrabold text-indigo-300 mt-1">{totalHdp} marta</div>
+                    <div className="text-[10px] text-slate-400 mt-1">Ariza havolasi bosildi</div>
+                  </div>
+
+                  <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800/60 hover:border-slate-750 transition-all">
+                    <div className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider">Omon School Bosilgan</div>
+                    <div className="text-2xl font-extrabold text-emerald-300 mt-1">{totalOmon} marta</div>
+                    <div className="text-[10px] text-slate-400 mt-1">Ariza havolasi bosildi</div>
                   </div>
 
                 </div>
@@ -682,7 +705,7 @@ export default function AdminPanel() {
                   ))}
                 </div>
 
-                <div className="space-y-2 flex flex-col justify-end">
+                <div className="space-y-3 flex flex-col justify-end">
                   <div className="flex gap-2">
                     <input
                       type="text"
@@ -698,6 +721,34 @@ export default function AdminPanel() {
                     >
                       Qo'shish
                     </button>
+                  </div>
+
+                  <div className="border-t border-slate-900 pt-2.5 mt-1 space-y-2">
+                    <div>
+                      <label className="text-[9px] uppercase font-bold text-slate-500 block mb-0.5">
+                        HDP LC Ariza Linki:
+                      </label>
+                      <input
+                        type="url"
+                        value={settings.hdpLink || ""}
+                        onChange={(e) => setSettings(prev => ({ ...prev, hdpLink: e.target.value }))}
+                        className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-white font-semibold"
+                        placeholder="https://forms.gle/..."
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[9px] uppercase font-bold text-slate-500 block mb-0.5">
+                        Omon School Ariza Linki:
+                      </label>
+                      <input
+                        type="url"
+                        value={settings.omonLink || ""}
+                        onChange={(e) => setSettings(prev => ({ ...prev, omonLink: e.target.value }))}
+                        className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-white font-semibold"
+                        placeholder="https://forms.gle/..."
+                      />
+                    </div>
                   </div>
 
                   <button

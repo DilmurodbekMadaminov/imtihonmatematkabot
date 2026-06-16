@@ -64,7 +64,9 @@ const seedCandidates = () => {
 // Global settings stored persistently
 let globalSettings = {
   channelUsername: '@dilmurodbekmatematika',
-  channels: ['@dilmurodbekmatematika', '@DilnuraMadaminova']
+  channels: ['@dilmurodbekmatematika', '@DilnuraMadaminova'],
+  hdpLink: 'https://forms.gle/f6ZiQtiqCAH1CLy87',
+  omonLink: 'https://forms.gle/97m9hCsBFovYKKrX7'
 };
 
 async function loadSettings() {
@@ -76,6 +78,12 @@ async function loadSettings() {
         if (data) {
           if (data.channelUsername) {
             globalSettings.channelUsername = data.channelUsername;
+          }
+          if (data.hdpLink) {
+            globalSettings.hdpLink = data.hdpLink;
+          }
+          if (data.omonLink) {
+            globalSettings.omonLink = data.omonLink;
           }
           let channelsList: string[] = [];
           if (Array.isArray(data.channels)) {
@@ -90,7 +98,7 @@ async function loadSettings() {
           const targetChannel = '@DilnuraMadaminova';
           if (!channelsList.some(ch => ch.toLowerCase() === targetChannel.toLowerCase())) {
             channelsList.push(targetChannel);
-            await saveSettings(channelsList);
+            await saveSettings(channelsList, globalSettings.hdpLink, globalSettings.omonLink);
           }
 
           globalSettings.channels = channelsList;
@@ -106,16 +114,24 @@ async function loadSettings() {
   }
 }
 
-async function saveSettings(channels: string[]) {
+async function saveSettings(channels: string[], hdpLink?: string, omonLink?: string) {
   globalSettings.channels = channels;
   if (channels.length > 0) {
     globalSettings.channelUsername = channels[0];
+  }
+  if (hdpLink) {
+    globalSettings.hdpLink = hdpLink;
+  }
+  if (omonLink) {
+    globalSettings.omonLink = omonLink;
   }
   if (db) {
     try {
       await setDoc(doc(db, 'settings', 'config'), { 
         channels, 
-        channelUsername: channels.length > 0 ? channels[0] : '' 
+        channelUsername: channels.length > 0 ? channels[0] : '',
+        hdpLink: globalSettings.hdpLink,
+        omonLink: globalSettings.omonLink
       }, { merge: true });
     } catch (e) {
       console.error("Error saving settings to Firestore:", e);
@@ -190,6 +206,7 @@ interface UserSession {
 }
 
 const sessions = new Map<number, UserSession>();
+const adminState = new Map<number, string>();
 
 async function startServer() {
   const app = express();
@@ -325,6 +342,14 @@ async function startServer() {
           return next();
         }
 
+        // Bypass for admins so they can access administrative command/actions freely
+        const userId = ctx.from.id;
+        const envAdminId = process.env.ADMIN_ID ? Number(process.env.ADMIN_ID) : undefined;
+        const uData = userActivity.get(userId);
+        if ((envAdminId && userId === envAdminId) || (uData && uData.isAdmin)) {
+          return next();
+        }
+
         const isSubscribed = await checkSubscription(ctx);
         if (!isSubscribed) {
           if (ctx.callbackQuery) {
@@ -345,11 +370,70 @@ async function startServer() {
       };
 
       bot.start(async (ctx) => {
-        ctx.reply(
-          "Salom! Men Matematika testini o'tkazuvchi botman.\n\nQuyidagilardan birini tanlang:",
+        if (ctx.from) {
+          trackUser(ctx.from);
+        }
+        await ctx.reply(
+          "Salom! Matematika imtihon botiga xush kelibsiz.\n\nQuyidagi bo'limlardan birini tanlang:",
+          Markup.keyboard([
+            ["🏢 HDP LC", "🏫 Omon School"]
+          ]).resize()
+        ).catch(console.error);
+
+        await ctx.reply(
+          "Testlarni boshlash uchun imtihon variantlaridan birini tanlang:",
           getMainMenuKeyboard()
-        );
+        ).catch(console.error);
       });
+
+      const handleHdpClick = async (ctx: any) => {
+        const userId = ctx.from?.id;
+        if (userId) {
+          try {
+            const userRef = doc(db, 'users', userId.toString());
+            const existing = userActivity.get(userId) || {} as Partial<UserData>;
+            const currentHdp = (existing as any).hdp || 0;
+            const updated = { ...existing, hdp: currentHdp + 1 };
+            userActivity.set(userId, updated as UserData);
+            if (db) {
+              await setDoc(userRef, { hdp: currentHdp + 1 }, { merge: true }).catch(console.error);
+            }
+          } catch (err) {
+            console.error("Error setting HDP click:", err);
+          }
+        }
+        const safeUrl = globalSettings.hdpLink || "https://forms.gle/f6ZiQtiqCAH1CLy87";
+        return ctx.reply("🏢 HDP LC uchun ariza topshirish havolasi:", Markup.inlineKeyboard([
+          [Markup.button.url("Ariza topshirish 📝", safeUrl)]
+        ]));
+      };
+
+      const handleOmonClick = async (ctx: any) => {
+        const userId = ctx.from?.id;
+        if (userId) {
+          try {
+            const userRef = doc(db, 'users', userId.toString());
+            const existing = userActivity.get(userId) || {} as Partial<UserData>;
+            const currentOmon = (existing as any).omon || 0;
+            const updated = { ...existing, omon: currentOmon + 1 };
+            userActivity.set(userId, updated as UserData);
+            if (db) {
+              await setDoc(userRef, { omon: currentOmon + 1 }, { merge: true }).catch(console.error);
+            }
+          } catch (err) {
+            console.error("Error setting Omon click:", err);
+          }
+        }
+        const safeUrl = globalSettings.omonLink || "https://forms.gle/97m9hCsBFovYKKrX7";
+        return ctx.reply("🏫 Omon School uchun ariza topshirish havolasi:", Markup.inlineKeyboard([
+          [Markup.button.url("Ariza topshirish 📝", safeUrl)]
+        ]));
+      };
+
+      bot.hears(["🏢 HDP LC", "HDP LC", "hdp lc", "Hdp lc"], handleHdpClick);
+      bot.hears(["🏫 Omon School", "Omon School", "omon school", "Omon school"], handleOmonClick);
+      bot.action("btn_hdp", handleHdpClick);
+      bot.action("btn_omon", handleOmonClick);
 
       const sendQuestion = async (ctx: any, chatId: number) => {
         const session = sessions.get(chatId);
@@ -416,6 +500,29 @@ async function startServer() {
         const userId = ctx.from?.id;
         if (!userId) return;
 
+        // Auto-promote if the user's Telegram ID matches the configured ADMIN_ID env variable
+        const envAdminId = process.env.ADMIN_ID ? Number(process.env.ADMIN_ID) : undefined;
+        if (envAdminId && userId === envAdminId) {
+          const existing = userActivity.get(userId) || {} as Partial<UserData>;
+          if (!existing.isAdmin) {
+            existing.isAdmin = true;
+            const data: UserData = {
+              ...existing as UserData,
+              timestamp: Date.now(),
+              firstName: ctx.from.first_name,
+              lastName: ctx.from.last_name,
+              username: ctx.from.username,
+              testsTaken: existing.testsTaken || 0,
+              averageScore: existing.averageScore || 0,
+              isAdmin: true
+            };
+            userActivity.set(userId, data);
+            if (db) {
+              await setDoc(doc(db, 'users', userId.toString()), data, { merge: true }).catch(console.error);
+            }
+          }
+        }
+
         const args = ctx.payload;
         if (args) {
           const expectedPassword = process.env.ADMIN_PASSWORD || "1";
@@ -435,7 +542,7 @@ async function startServer() {
             if (db) {
               await setDoc(doc(db, 'users', userId.toString()), data, { merge: true });
             }
-            return ctx.reply("🎉 Tabriklaymiz! Siz muvaffaqiyatli admin bo'ldingiz. Endi to'g'ridan-to'g'ri `/admin` buyrug'ini yuboring.");
+            return ctx.reply("🎉 Tabriklaymiz! Siz muvaffaqiyatli admin bo'ldingiz.");
           } else {
             return ctx.reply("❌ Noto'g'ri parol! Ruxsat olish uchun `/admin [parol]` formatida yuboring.");
           }
@@ -446,24 +553,13 @@ async function startServer() {
           return ctx.reply("🔒 Boshqaruv ruxsati berilmagan. Adminlik huquqini faollashtirish uchun parolni kiriting:\n\n`/admin [parol]`");
         }
 
-        const totalUsers = userActivity.size;
-        const totalTests = Array.from(userActivity.values()).reduce((sum, u) => sum + (u.testsTaken || 0), 0);
-        const totalScore = Array.from(userActivity.values()).reduce((sum, u) => sum + (u.averageScore || 0), 0);
-        const avgScore = totalUsers > 0 ? Math.round(totalScore / totalUsers) : 0;
-        const channelsCount = globalSettings.channels.length;
-
-        const text = `👨‍💼 *Admin Boshqaruv Oynasi*\n\n📊 *Tizim statistikasi:*\n• Jami a'zolar: *${totalUsers}* nafar\n• Ishlangan testlar: *${totalTests}* marta\n• O'rtacha o'zlashtirish: *${avgScore}%*\n• Hamkor kanallar: *${channelsCount}* ta\n\n🔔 *Xabar yuborish:*\nBarcha a'zolarga xabar yuborish uchun:\n\`/broadcast <xabar matni>\`\n\nSiz shuningdek quyidagi tugma orqali to'liq funksional **Web Admin Panelni** ochib, barcha foydalanuvchilarni boshqarishingiz mumkin.`;
-
-        const appUrl = process.env.APP_URL || "";
-        const buttons = [];
-        if (appUrl) {
-          buttons.push([Markup.button.webApp("🖥 Web Admin Panel", appUrl)]);
-        }
-        buttons.push([Markup.button.callback("🔄 Statistikani yangilash", "refresh_admin_stats")]);
+        const text = `👨‍💼 *Admin Boshqaruv Oynasi*\n\n` +
+          `🔔 *Xabar yuborish:*\n` +
+          `Barcha a'zolarga xabar yuborish uchun:\n` +
+          `\`/broadcast <xabar matni>\``;
 
         await ctx.reply(text, {
-          parse_mode: "Markdown",
-          ...Markup.inlineKeyboard(buttons)
+          parse_mode: "Markdown"
         });
       });
 
@@ -517,38 +613,6 @@ async function startServer() {
         }
 
         await ctx.reply(`✅ Xabar yuborish yakunlandi:\n\n• Muvaffaqiyatli: *${sentCount}* ta\n• Muvaffaqiyatsiz: *${failedCount}* ta`, { parse_mode: "Markdown" });
-      });
-
-      bot.action('refresh_admin_stats', async (ctx) => {
-        const userId = ctx.from?.id;
-        if (!userId) return ctx.answerCbQuery();
-        
-        const userData = userActivity.get(userId);
-        if (!userData || !userData.isAdmin) {
-          return ctx.answerCbQuery("🔒 Siz admin emassiz!", { show_alert: true });
-        }
-
-        const totalUsers = userActivity.size;
-        const totalTests = Array.from(userActivity.values()).reduce((sum, u) => sum + (u.testsTaken || 0), 0);
-        const totalScore = Array.from(userActivity.values()).reduce((sum, u) => sum + (u.averageScore || 0), 0);
-        const avgScore = totalUsers > 0 ? Math.round(totalScore / totalUsers) : 0;
-        const channelsCount = globalSettings.channels.length;
-
-        const text = `👨‍💼 *Admin Boshqaruv Oynasi* (Yangilandi)\n\n📊 *Tizim statistikasi:*\n• Jami a'zolar: *${totalUsers}* nafar\n• Ishlangan testlar: *${totalTests}* marta\n• O'rtacha o'zlashtirish: *${avgScore}%*\n• Hamkor kanallar: *${channelsCount}* ta\n\n🔔 *Xabar yuborish:*\nBarcha a'zolarga xabar yuborish uchun:\n\`/broadcast <xabar matni>\`\n\nSiz shuningdek quyidagi tugma orqali to'liq funksional **Web Admin Panelni** ochib, barcha foydalanuvchilarni boshqarishingiz mumkin.`;
-
-        const appUrl = process.env.APP_URL || "";
-        const buttons = [];
-        if (appUrl) {
-          buttons.push([Markup.button.webApp("🖥 Web Admin Panel", appUrl)]);
-        }
-        buttons.push([Markup.button.callback("🔄 Statistikani yangilash", "refresh_admin_stats")]);
-
-        await ctx.editMessageText(text, {
-          parse_mode: "Markdown",
-          ...Markup.inlineKeyboard(buttons)
-        }).catch(() => {});
-        
-        await ctx.answerCbQuery("Statistika yangilandi!");
       });
 
       bot.action('check_sub', async (ctx) => {
@@ -865,12 +929,12 @@ async function startServer() {
   });
 
   app.post("/api/settings", async (req, res) => {
-    const { channels } = req.body;
+    const { channels, hdpLink, omonLink } = req.body;
     if (!Array.isArray(channels)) {
       return res.status(400).json({ error: "channels must be an array" });
     }
     try {
-      await saveSettings(channels);
+      await saveSettings(channels, hdpLink, omonLink);
       res.json({ success: true, settings: globalSettings });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
