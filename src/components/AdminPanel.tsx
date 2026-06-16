@@ -909,7 +909,7 @@ export default function AdminPanel() {
                 <div>
                   <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
                     <Briefcase size={16} className="text-indigo-400" />
-                    Nomzod Rezyumesi tahlili (HR)
+                    Nomzod Rezyumesi tahlili
                   </h3>
                   <p className="text-[10px] text-slate-400 mt-0.5">
                     Bot orqali o'tgan nomzod ma'lumotlari

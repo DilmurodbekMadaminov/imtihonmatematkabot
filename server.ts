@@ -369,71 +369,76 @@ async function startServer() {
         ]);
       };
 
+      const getPersistentKeyboard = () => {
+        return Markup.keyboard([
+          ["📕 Majburiy Matematika", "🎓 Milliy Sertifikat"],
+          ["🧮 Matematika (Ixtisoslik)"]
+        ]).resize();
+      };
+
       bot.start(async (ctx) => {
         if (ctx.from) {
           trackUser(ctx.from);
         }
         await ctx.reply(
-          "Salom! Matematika imtihon botiga xush kelibsiz.\n\nQuyidagi bo'limlardan birini tanlang:",
-          Markup.keyboard([
-            ["🏢 HDP LC", "🏫 Omon School"]
-          ]).resize()
-        ).catch(console.error);
-
-        await ctx.reply(
-          "Testlarni boshlash uchun imtihon variantlaridan birini tanlang:",
-          getMainMenuKeyboard()
+          "Salom! Matematika imtihon botiga xush kelibsiz.\n\nTestlarni boshlash uchun quyidagi menyu tugmalaridan birini tanlang:",
+          getPersistentKeyboard()
         ).catch(console.error);
       });
 
-      const handleHdpClick = async (ctx: any) => {
-        const userId = ctx.from?.id;
-        if (userId) {
-          try {
-            const userRef = doc(db, 'users', userId.toString());
-            const existing = userActivity.get(userId) || {} as Partial<UserData>;
-            const currentHdp = (existing as any).hdp || 0;
-            const updated = { ...existing, hdp: currentHdp + 1 };
-            userActivity.set(userId, updated as UserData);
-            if (db) {
-              await setDoc(userRef, { hdp: currentHdp + 1 }, { merge: true }).catch(console.error);
-            }
-          } catch (err) {
-            console.error("Error setting HDP click:", err);
-          }
+      bot.hears(["📕 Majburiy Matematika", "Majburiy Matematika", "majburiy matematika"], async (ctx) => {
+        const isSubscribed = await checkSubscription(ctx);
+        if (!isSubscribed) {
+          return sendSubscriptionPrompt(ctx);
         }
-        const safeUrl = globalSettings.hdpLink || "https://forms.gle/f6ZiQtiqCAH1CLy87";
-        return ctx.reply("🏢 HDP LC uchun ariza topshirish havolasi:", Markup.inlineKeyboard([
-          [Markup.button.url("Ariza topshirish 📝", safeUrl)]
-        ]));
-      };
 
-      const handleOmonClick = async (ctx: any) => {
-        const userId = ctx.from?.id;
-        if (userId) {
-          try {
-            const userRef = doc(db, 'users', userId.toString());
-            const existing = userActivity.get(userId) || {} as Partial<UserData>;
-            const currentOmon = (existing as any).omon || 0;
-            const updated = { ...existing, omon: currentOmon + 1 };
-            userActivity.set(userId, updated as UserData);
-            if (db) {
-              await setDoc(userRef, { omon: currentOmon + 1 }, { merge: true }).catch(console.error);
-            }
-          } catch (err) {
-            console.error("Error setting Omon click:", err);
-          }
+        const buttons: any[][] = [];
+        variants.forEach((v, i) => {
+          buttons.push([Markup.button.callback(v.title, `start_variant_${i}`)]);
+        });
+        buttons.push([Markup.button.callback("↩️ Orqaga", "main_menu")]);
+
+        await ctx.reply(
+          "📕 Majburiy Matematika variantlaridan birini tanlang:",
+          Markup.inlineKeyboard(buttons)
+        ).catch(() => {});
+      });
+
+      bot.hears(["🎓 Milliy Sertifikat", "Milliy Sertifikat", "milliy sertifikat"], async (ctx) => {
+        const isSubscribed = await checkSubscription(ctx);
+        if (!isSubscribed) {
+          return sendSubscriptionPrompt(ctx);
         }
-        const safeUrl = globalSettings.omonLink || "https://forms.gle/97m9hCsBFovYKKrX7";
-        return ctx.reply("🏫 Omon School uchun ariza topshirish havolasi:", Markup.inlineKeyboard([
-          [Markup.button.url("Ariza topshirish 📝", safeUrl)]
-        ]));
-      };
 
-      bot.hears(["🏢 HDP LC", "HDP LC", "hdp lc", "Hdp lc"], handleHdpClick);
-      bot.hears(["🏫 Omon School", "Omon School", "omon school", "Omon school"], handleOmonClick);
-      bot.action("btn_hdp", handleHdpClick);
-      bot.action("btn_omon", handleOmonClick);
+        const buttons: any[][] = [];
+        milliySertifikat.forEach((v, i) => {
+          buttons.push([Markup.button.callback(v.title, `start_milliy_${i}`)]);
+        });
+        buttons.push([Markup.button.callback("↩️ Orqaga", "main_menu")]);
+
+        await ctx.reply(
+          "🎓 Milliy Sertifikat imtihonlaridan birini tanlang:",
+          Markup.inlineKeyboard(buttons)
+        ).catch(() => {});
+      });
+
+      bot.hears(["🧮 Matematika (Ixtisoslik)", "Matematika", "matematika"], async (ctx) => {
+        const isSubscribed = await checkSubscription(ctx);
+        if (!isSubscribed) {
+          return sendSubscriptionPrompt(ctx);
+        }
+
+        const buttons: any[][] = [];
+        mathSections.forEach((section) => {
+          buttons.push([Markup.button.callback(`📁 ${section.title}`, `sec_list_${section.id}`)]);
+        });
+        buttons.push([Markup.button.callback("↩️ Orqaga", "main_menu")]);
+
+        await ctx.reply(
+          "🧮 Matematika ixtisoslik bo'limlaridan birini tanlang:",
+          Markup.inlineKeyboard(buttons)
+        ).catch(() => {});
+      });
 
       const sendQuestion = async (ctx: any, chatId: number) => {
         const session = sessions.get(chatId);
@@ -507,8 +512,6 @@ async function startServer() {
       const getAdminKeyboard = () => {
         return Markup.inlineKeyboard([
           [Markup.button.callback("✏️ Kanalni o'zgartirish", "edit_channels")],
-          [Markup.button.callback("✏️ HDP silkani o'zgartirish", "edit_hdp_link")],
-          [Markup.button.callback("✏️ Omon silkani o'zgartirish", "edit_omon_link")],
           [Markup.button.callback("📢 Xabar tarqatish", "edit_broadcast")],
           [Markup.button.callback("❌ Bekor qilish", "cancel_admin")]
         ]);
@@ -516,18 +519,12 @@ async function startServer() {
 
       const getAdminStatusMessage = () => {
         const totalUsers = userActivity.size;
-        const totalHdp = Array.from(userActivity.values()).reduce((sum, u: any) => sum + (u.hdp || 0), 0);
-        const totalOmon = Array.from(userActivity.values()).reduce((sum, u: any) => sum + (u.omon || 0), 0);
         const channelLink = formatChannelLink(globalSettings.channelUsername);
 
         return `📊 *Statistika:*\n\n` +
           `👥 Foydalanuvchilar: ${totalUsers}\n\n` +
-          `🔷 HDP LC bosilgan: ${totalHdp}\n` +
-          `🔷 Omon School bosilgan: ${totalOmon}\n\n` +
           `⚙️ *Joriy sozlamalar:*\n` +
-          `Kanal: ${channelLink}\n` +
-          `HDP Link: ${globalSettings.hdpLink || ""}\n` +
-          `Omon Link: ${globalSettings.omonLink || ""}`;
+          `Kanal: ${channelLink}`;
       };
 
       bot.command('admin', async (ctx) => {
@@ -604,38 +601,6 @@ async function startServer() {
         adminState.set(userId, "awaiting_channels");
         await ctx.reply(
           "✏️ Yangi hamkor kanali havolasi yoki foydalanuvchi nomini yuboring (masalan: @DilnuraMadaminova yoki https://t.me/Xorazm_ish_elon_uz):\n\n⚠️ Diqqat: @DilnuraMadaminova kanali tizim tomonidan avtomatik qo'shiladi.",
-          Markup.inlineKeyboard([[Markup.button.callback("❌ Bekor qilish", "cancel_admin")]])
-        );
-        await ctx.answerCbQuery();
-      });
-
-      bot.action('edit_hdp_link', async (ctx) => {
-        const userId = ctx.from?.id;
-        if (!userId) return ctx.answerCbQuery();
-        const userData = userActivity.get(userId);
-        if (!userData || !userData.isAdmin) {
-          return ctx.answerCbQuery("🔒 Siz admin emassiz!", { show_alert: true });
-        }
-
-        adminState.set(userId, "awaiting_hdp_link");
-        await ctx.reply(
-          "✏️ HDP LC uchun yangi ariza havolasini (URL) yuboring:\n(Masalan: https://forms.gle/...)",
-          Markup.inlineKeyboard([[Markup.button.callback("❌ Bekor qilish", "cancel_admin")]])
-        );
-        await ctx.answerCbQuery();
-      });
-
-      bot.action('edit_omon_link', async (ctx) => {
-        const userId = ctx.from?.id;
-        if (!userId) return ctx.answerCbQuery();
-        const userData = userActivity.get(userId);
-        if (!userData || !userData.isAdmin) {
-          return ctx.answerCbQuery("🔒 Siz admin emassiz!", { show_alert: true });
-        }
-
-        adminState.set(userId, "awaiting_omon_link");
-        await ctx.reply(
-          "✏️ Omon School uchun yangi ariza havolasini (URL) yuboring:\n(Masalan: https://forms.gle/...)",
           Markup.inlineKeyboard([[Markup.button.callback("❌ Bekor qilish", "cancel_admin")]])
         );
         await ctx.answerCbQuery();
@@ -760,24 +725,6 @@ async function startServer() {
           try {
             await saveSettings(parts, globalSettings.hdpLink, globalSettings.omonLink);
             await ctx.reply(`✅ Kanallar muvaffaqiyatli yangilandi!\n\nJoriy ro'yxat: ${parts.join(', ')}`);
-          } catch (e: any) {
-            await ctx.reply(`❌ Xatolik yuz berdi: ${e.message}`);
-          }
-        } else if (state === "awaiting_hdp_link") {
-          adminState.delete(userId);
-          const url = text.trim();
-          try {
-            await saveSettings(globalSettings.channels, url, globalSettings.omonLink);
-            await ctx.reply(`✅ HDP LC havolasi muvaffaqiyatli yangilandi!\n\nHavola: ${url}`);
-          } catch (e: any) {
-            await ctx.reply(`❌ Xatolik yuz berdi: ${e.message}`);
-          }
-        } else if (state === "awaiting_omon_link") {
-          adminState.delete(userId);
-          const url = text.trim();
-          try {
-            await saveSettings(globalSettings.channels, globalSettings.hdpLink, url);
-            await ctx.reply(`✅ Omon School havolasi muvaffaqiyatli yangilandi!\n\nHavola: ${url}`);
           } catch (e: any) {
             await ctx.reply(`❌ Xatolik yuz berdi: ${e.message}`);
           }
