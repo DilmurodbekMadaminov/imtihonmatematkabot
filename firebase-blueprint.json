@@ -2,7 +2,7 @@
   "entities": {
     "User": {
       "title": "User",
-      "description": "A user of the Telegram bot",
+      "description": "A user of the Telegram bot and app",
       "type": "object",
       "properties": {
         "timestamp": {
@@ -20,6 +20,30 @@
         "username": {
           "type": "string",
           "description": "User's Telegram username"
+        },
+        "averageScore": {
+          "type": "number",
+          "description": "Average quiz score of user"
+        },
+        "testsTaken": {
+          "type": "number",
+          "description": "Total quizzes solved"
+        },
+        "isBanned": {
+          "type": "boolean",
+          "description": "Whether user is banned"
+        },
+        "referredBy": {
+          "type": "string",
+          "description": "Who referred this user"
+        },
+        "referralsCount": {
+          "type": "number",
+          "description": "Number of users referred"
+        },
+        "invitedUsers": {
+          "type": "array",
+          "description": "List of invited users ids"
         }
       },
       "required": ["timestamp"]
@@ -51,6 +75,101 @@
         }
       },
       "required": ["id", "category", "title", "questions", "timestamp"]
+    },
+    "QuizResult": {
+      "title": "QuizResult",
+      "description": "Historical quiz results of app users",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "number",
+          "description": "User's ID"
+        },
+        "testId": {
+          "type": "string",
+          "description": "UUID of custom test or internal variation identifier"
+        },
+        "testTitle": {
+          "type": "string",
+          "description": "Name/Title of the test solved"
+        },
+        "percentage": {
+          "type": "number",
+          "description": "Result percentage achieved"
+        },
+        "firstName": {
+          "type": "string",
+          "description": "User's first name"
+        },
+        "timestamp": {
+          "type": "number",
+          "description": "Completion timestamp"
+        }
+      },
+      "required": ["userId", "testId", "testTitle", "percentage", "timestamp"]
+    },
+    "Candidate": {
+      "title": "Candidate",
+      "description": "Candidate application data for moderator/teachers hiring",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "ID of applicant"
+        },
+        "fullName": {
+          "type": "string",
+          "description": "Full name of candidate"
+        },
+        "phone": {
+          "type": "string",
+          "description": "Contact number"
+        },
+        "direction": {
+          "type": "string",
+          "description": "Field/Class teacher level"
+        },
+        "score": {
+          "type": "number",
+          "description": "Application form score"
+        },
+        "status": {
+          "type": "string",
+          "description": "pending, approved, or rejected"
+        },
+        "timestamp": {
+          "type": "number",
+          "description": "Submission time"
+        },
+        "experience": {
+          "type": "string",
+          "description": "Text describing work achievements/years"
+        }
+      },
+      "required": ["id", "fullName", "phone", "status", "timestamp"]
+    },
+    "Setting": {
+      "title": "Setting",
+      "description": "Global persistent configurations",
+      "type": "object",
+      "properties": {
+        "channelUsername": {
+          "type": "string",
+          "description": "Primary channel handle"
+        },
+        "channels": {
+          "type": "array",
+          "description": "List of required channel handles"
+        },
+        "hdpLink": {
+          "type": "string",
+          "description": "Feedback forms or instructions link"
+        },
+        "omonLink": {
+          "type": "string",
+          "description": "Secondary instruction links"
+        }
+      }
     }
   },
   "firestore": {
@@ -65,6 +184,24 @@
         "$ref": "#/entities/CustomTest"
       },
       "description": "Collection of custom tests added by admins"
+    },
+    "quiz_results/{resultId}": {
+      "schema": {
+        "$ref": "#/entities/QuizResult"
+      },
+      "description": "Collection of solved test score sheets"
+    },
+    "candidates/{candidateId}": {
+      "schema": {
+        "$ref": "#/entities/Candidate"
+      },
+      "description": "Hiring submissions schema"
+    },
+    "settings/{settingId}": {
+      "schema": {
+        "$ref": "#/entities/Setting"
+      },
+      "description": "System-wide mutable link constraints"
     }
   }
 }

@@ -6,11 +6,17 @@ import fs from "fs";
 import { variants } from "./src/questions.js";
 import { mathSections } from "./src/mathSections.js";
 import { milliySertifikat } from "./src/milliySertifikat.js";
+import { yoshKitobxon } from "./src/yoshKitobxon.js";
 import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, setDoc, getDoc, getDocs, collection, query, where, Timestamp, deleteDoc } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, getDoc, getDocs, collection, query, where, Timestamp, deleteDoc, setLogLevel } from 'firebase/firestore';
+import { GoogleGenAI, Type } from "@google/genai";
+
+// Set firestore log level to suppress idle connection and network stream warnings
+setLogLevel('error');
 
 const firebaseConfigPath = path.join(process.cwd(), 'firebase-applet-config.json');
 let db: any = null;
+let botUsername = "kitobtanlovbot";
 
 try {
   if (fs.existsSync(firebaseConfigPath)) {
@@ -51,6 +57,10 @@ interface UserData {
   averageScore?: number;
   isAdmin?: boolean;
   isBanned?: boolean;
+  referredBy?: string;
+  referralsCount?: number;
+  invitedUsers?: string[];
+  points?: number;
 }
 
 interface Candidate {
@@ -158,6 +168,7 @@ async function saveSettings(channels: string[], hdpLink?: string, omonLink?: str
 
 // Fallback in-memory map if Firebase fails
 let userActivity = new Map<number, UserData>();
+let subCache = new Map<number, { isSubbed: boolean; timestamp: number }>();
 
 async function trackUser(user: { id: number; first_name?: string; last_name?: string; username?: string }) {
   const existing = userActivity.get(user.id) || {} as Partial<UserData>;
@@ -170,12 +181,24 @@ async function trackUser(user: { id: number; first_name?: string; last_name?: st
     testsTaken: existing.testsTaken || 0,
     averageScore: existing.averageScore || 0,
     isAdmin: existing.isAdmin || false,
-    isBanned: existing.isBanned || false
+    isBanned: existing.isBanned || false,
+    referredBy: existing.referredBy || "",
+    referralsCount: existing.referralsCount || 0,
+    invitedUsers: existing.invitedUsers || []
   };
   
   userActivity.set(user.id, data);
 
-  if (db) {
+  // Optimize Firestore writes: only write if user is new, their critical details changed,
+  // or more than 10 minutes have passed since the last write.
+  const timeSinceLastWrite = existing.timestamp ? (Date.now() - existing.timestamp) : Infinity;
+  const infoChanged = existing.firstName !== data.firstName || 
+                      existing.lastName !== data.lastName || 
+                      existing.username !== data.username;
+                      
+  const shouldWrite = !existing.timestamp || infoChanged || (timeSinceLastWrite > 10 * 60 * 1000);
+
+  if (db && shouldWrite) {
     try {
       // Clean any potential undefined keys from the object to prevent Firestore errors
       const firestoreData = { ...data };
@@ -199,7 +222,7 @@ async function handleBroadcastError(uId: number, error: any) {
 
 
 
-async function trackTestResult(userId: number, percentage: number) {
+async function trackTestResult(userId: number, percentage: number, testId: string = "general", testTitle: string = "Ushbu test") {
   const existing = userActivity.get(userId);
   if (!existing) return;
 
@@ -218,6 +241,18 @@ async function trackTestResult(userId: number, percentage: number) {
   if (db) {
     try {
       await setDoc(doc(db, 'users', userId.toString()), { testsTaken, averageScore }, { merge: true });
+      
+      // Save specific result details for certificate check
+      const resultDocId = `${userId}_${testId}`;
+      await setDoc(doc(db, 'quiz_results', resultDocId), {
+        userId,
+        testId,
+        testTitle,
+        percentage,
+        firstName: existing.firstName || "",
+        lastName: existing.lastName || "",
+        timestamp: Date.now()
+      });
     } catch (e) {
       console.error('Error saving test result to Firestore:', e);
     }
@@ -227,7 +262,7 @@ async function trackTestResult(userId: number, percentage: number) {
 
 
 interface UserSession {
-  type: 'majburiy' | 'matematika' | 'milliy' | 'custom';
+  type: 'majburiy' | 'matematika' | 'milliy' | 'yosh_kitobxon' | 'custom';
   variantIndex?: number;
   sectionId?: string;
   sectionVariantIndex?: number;
@@ -238,6 +273,22 @@ interface UserSession {
 
 const sessions = new Map<number, UserSession>();
 const adminState = new Map<number, string>();
+
+const getUserReferralCount = (userId: number): number => {
+  const user = userActivity.get(userId);
+  if (!user) return 0;
+  return Array.isArray(user.invitedUsers) ? user.invitedUsers.length : (user.referralsCount || 0);
+};
+
+const getRequiredReferrals = (): number => {
+  return 0;
+};
+
+// Check if user is an admin by env or record
+const checkIsAdmin = (idStr: string): boolean => {
+  const userIdNum = Number(idStr);
+  return userIdNum === 7858117466;
+};
 
 async function startServer() {
   const app = express();
@@ -303,6 +354,15 @@ async function startServer() {
     try {
       bot = new Telegraf(botToken);
       
+      bot.telegram.getMe().then((me) => {
+        if (me && me.username) {
+          botUsername = me.username;
+          console.log(`Telegram Bot username fetched dynamically: @${botUsername}`);
+        }
+      }).catch(err => {
+        console.error("Error fetching bot info from Telegram:", err);
+      });
+      
       bot.catch((err: any, ctx: any) => {
         console.error(`Telegram bot error for update ${ctx.update?.update_id || "unknown"}:`, err);
       });
@@ -325,17 +385,33 @@ async function startServer() {
 
 
 
-      const checkSubscription = async (ctx: any): Promise<boolean> => {
+      const checkSubscription = async (ctx: any, forceFresh: boolean = false): Promise<boolean> => {
         try {
           const userId = ctx.from?.id;
           if (!userId) return false;
+
+          // Admin check (admins bypass subscription requirements completely)
+          if (checkIsAdmin(userId.toString())) {
+            return true;
+          }
+
+          // Use cache if not forcing fresh verification and cache is valid (3 minutes TTL)
+          if (!forceFresh) {
+            const cached = subCache.get(userId);
+            if (cached && (Date.now() - cached.timestamp < 3 * 60 * 1000)) {
+              return cached.isSubbed;
+            }
+          }
           
           const channels = globalSettings.channels && globalSettings.channels.length > 0
             ? globalSettings.channels 
             : [globalSettings.channelUsername];
 
           const validChannels = channels.map(ch => ch.trim()).filter(ch => ch !== '');
-          if (validChannels.length === 0) return true;
+          if (validChannels.length === 0) {
+            subCache.set(userId, { isSubbed: true, timestamp: Date.now() });
+            return true;
+          }
 
           // Paralel ravishda barcha kanallarni tekshiramiz (maksimal tezlik - 1 soniya ichida)
           const results = await Promise.all(
@@ -344,7 +420,6 @@ async function startServer() {
                 const member = await ctx.telegram.getChatMember(channel, userId);
                 return ['creator', 'administrator', 'member', 'restricted'].includes(member.status);
               } catch (error: any) {
-                console.error(`Error checking subscription for ${channel}:`, error);
                 const errMsg = String(error?.message || error?.description || '').toLowerCase();
                 if (
                   errMsg.includes('member list is inaccessible') ||
@@ -354,15 +429,19 @@ async function startServer() {
                   errMsg.includes('not a member') ||
                   errMsg.includes('bad request')
                 ) {
+                  console.warn(`Note: Could not check subscription for ${channel} (falling back to true):`, errMsg);
                   // Fallback to true to prevent blocking/breaking the bot when a user or inaccessible channel is added
                   return true;
                 }
+                console.error(`Error checking subscription for ${channel}:`, error);
                 return false;
               }
             })
           );
 
-          return results.every(isSubbed => isSubbed === true);
+          const isSubbed = results.every(isSubbed => isSubbed === true);
+          subCache.set(userId, { isSubbed, timestamp: Date.now() });
+          return isSubbed;
         } catch (error) {
           console.error("Error checking subscription:", error);
           return false;
@@ -393,24 +472,84 @@ async function startServer() {
       };
 
       // Obuna bo'lmagan foydalanuvchilarning barcha so'rovlarini to'xatuvchi va tezkor tekshiruvchi middleware
+      const sendReferralStats = async (ctx: any) => {
+        const userId = ctx.from?.id;
+        if (!userId) return;
+        const refCount = getUserReferralCount(userId);
+        const requiredRef = getRequiredReferrals();
+        const shareLink = `https://t.me/${botUsername}?start=ref_${userId}`;
+        
+        let text = `🎁 *Hamkorlik (Referal) Dasturi:*\n\n` +
+          `Siz taklif etgan a'zolar soni: *${refCount}* ta\n` +
+          `Testni ishlash imkonini ochish uchun jami: *${requiredRef}* ta taklif kerak.\n\n` +
+          (refCount >= requiredRef 
+            ? `✅ *Barcha testlar siz uchun ochiq!*` 
+            : `⏳ *Yana ${requiredRef - refCount} ta a'zo qo'shishingiz kerak.*`
+          ) + 
+          `\n\n🔗 *Sizning taklif havolangiz:*\n\`${shareLink}\`\n\n` +
+          `Ushbu havolani do'stlaringizga ulashing. Yangi testlar yuklanganida ulardan foydalanish uchun qo'shimcha a'zo taklif etishingiz zarur bo'ladi.`;
+
+        const inlineBtn = Markup.inlineKeyboard([
+          [Markup.button.url("🚀 Do'stlarga ulashish", `https://t.me/share/url?url=${encodeURIComponent(shareLink)}&text=${encodeURIComponent("Matematika imtihon botidan bepul test yechib sertifikat oling!")}`)]
+        ]);
+
+        await ctx.reply(text, { parse_mode: "Markdown", ...inlineBtn }).catch(console.error);
+      };
+
+      const getMainMenuKeyboard = () => {
+        return Markup.inlineKeyboard([
+          [Markup.button.callback("📕 Majburiy Matematika (370 ta test)", "menu_majburiy")],
+          [Markup.button.callback("🧮 Matematika (Ixtisoslik bo'limlari)", "menu_matematika")],
+          [Markup.button.callback("🎓 Milliy Sertifikat imtihonlari", "menu_milliy")],
+          [Markup.button.callback("📚 Yosh kitobxon (30 ta test)", "menu_yosh_kitobxon")]
+        ]);
+      };
+
+      const getPersistentKeyboard = (userId: number) => {
+        const refCount = getUserReferralCount(userId);
+        const isAdmin = checkIsAdmin(userId.toString());
+        const requiredRef = getRequiredReferrals();
+        
+        if (refCount < requiredRef && !isAdmin) {
+          return Markup.keyboard([
+            ["🎁 Referal Bo'limi"]
+          ]).resize();
+        } else {
+          const webAppUrl = `${process.env.APP_URL || "https://ais-dev-zwxesqr7uajqrp3m5f64nl-286796810075.asia-east1.run.app"}/?tg_user_id=${userId}`;
+          return Markup.keyboard([
+            [Markup.button.webApp("📝 Testni ishlash", webAppUrl)],
+            ["📕 Majburiy Matematika", "🎓 Milliy Sertifikat"],
+            ["🧮 Matematika (Ixtisoslik)", "📚 Yosh kitobxon"],
+            ["🎁 Referal Bo'limi"]
+          ]).resize();
+        }
+      };
+
+      // Obuna bo'lmagan foydalanuvchilarning barcha so'rovlarini to'xatuvchi va tezkor tekshiruvchi middleware
       bot.use(async (ctx, next) => {
         if (!ctx.from) return next();
         
-        // check_sub kabi maxsus aksiyalarni middleware bloklamaydi (bular o'zlarida tekshirishadi)
         const isCheckSub = ctx.callbackQuery && 'data' in ctx.callbackQuery && ctx.callbackQuery.data === 'check_sub';
-        
         if (isCheckSub) {
           return next();
         }
 
-        // Bypass for admins so they can access administrative command/actions freely
         const userId = ctx.from.id;
-        const envAdminId = process.env.ADMIN_ID ? Number(process.env.ADMIN_ID) : undefined;
-        const uData = userActivity.get(userId);
-        if ((envAdminId && userId === envAdminId) || (uData && uData.isAdmin)) {
+        const isAdmin = checkIsAdmin(userId.toString());
+        if (isAdmin) {
           return next();
         }
 
+        // Allow start command and referral queries
+        const messageText = ctx.message && ('text' in ctx.message) ? ctx.message.text : "";
+        const isStart = messageText.startsWith("/start");
+        const isReferralAction = messageText.includes("Referal") || messageText.includes("Taklif") || (ctx.callbackQuery && 'data' in ctx.callbackQuery ? (ctx.callbackQuery as any).data.includes("referral") : false);
+        
+        if (isStart || isReferralAction) {
+          return next();
+        }
+
+        // Check subscription
         const isSubscribed = await checkSubscription(ctx);
         if (!isSubscribed) {
           if (ctx.callbackQuery) {
@@ -419,38 +558,191 @@ async function startServer() {
           return sendSubscriptionPrompt(ctx);
         }
 
+        // Check referral count
+        const refCount = getUserReferralCount(userId);
+        const requiredRef = getRequiredReferrals();
+        if (refCount < requiredRef) {
+          if (ctx.callbackQuery) {
+            await ctx.answerCbQuery(`⚠️ Testni boshlash uchun kamida ${requiredRef} ta do'stingizni taklif qiling!`, { show_alert: true }).catch(() => {});
+          }
+          return sendReferralStats(ctx);
+        }
+
         return next();
       });
 
-      const getMainMenuKeyboard = () => {
-        return Markup.inlineKeyboard([
-          [Markup.button.callback("📕 Majburiy Matematika (370 ta test)", "menu_majburiy")],
-          [Markup.button.callback("🧮 Matematika (Ixtisoslik bo'limlari)", "menu_matematika")],
-          [Markup.button.callback("🎓 Milliy Sertifikat imtihonlari", "menu_milliy")]
-        ]);
-      };
-
-      const getPersistentKeyboard = () => {
-        return Markup.keyboard([
-          ["📕 Majburiy Matematika", "🎓 Milliy Sertifikat"],
-          ["🧮 Matematika (Ixtisoslik)"]
-        ]).resize();
-      };
-
       bot.start(async (ctx) => {
-        if (ctx.from) {
-          trackUser(ctx.from);
+        const userId = ctx.from?.id;
+        if (!userId) return;
+
+        try {
+          // Check if starting with an invite payload
+          const messageText = ctx.message && ('text' in ctx.message) ? ctx.message.text : "";
+          let startPayload = (ctx as any).payload || ctx.startPayload || "";
+          if (!startPayload && messageText.startsWith("/start ")) {
+            startPayload = messageText.substring(7).trim();
+          }
+
+          let invitedByReferrerName = "";
+          
+          if (startPayload && startPayload.startsWith("ref_")) {
+            const referrerIdStr = startPayload.replace("ref_", "");
+            const referrerId = Number(referrerIdStr);
+            
+            if (!isNaN(referrerId) && referrerId !== userId) {
+              // Verify if the user is completely new (not in cache and not in Firestore)
+              let isNewUser = !userActivity.has(userId);
+              if (isNewUser && db) {
+                try {
+                  const uSnap = await getDoc(doc(db, 'users', userId.toString()));
+                  if (uSnap.exists()) {
+                    isNewUser = false;
+                    userActivity.set(userId, uSnap.data() as UserData);
+                  }
+                } catch (e) {
+                  console.error("Safe user DB check failed:", e);
+                }
+              }
+
+              // Check cache (ultra-fast, non-blocking)
+              const cachedUser = userActivity.get(userId);
+              const alreadyReferred = cachedUser?.referredBy;
+              
+              if (isNewUser && !alreadyReferred) {
+                let refData = userActivity.get(referrerId);
+                
+                // Fallback to safe DB read if referrer is not in cache (highly unlikely)
+                if (!refData && db) {
+                  try {
+                    const rSnap = await getDoc(doc(db, 'users', referrerIdStr));
+                    if (rSnap.exists()) {
+                      refData = rSnap.data() as UserData;
+                    }
+                  } catch (e) {
+                    console.error("Safe referrer DB check failed:", e);
+                  }
+                }
+                
+                if (refData) {
+                  invitedByReferrerName = refData.firstName || refData.username || "";
+                  
+                  // Update current user cache
+                  if (cachedUser) {
+                    cachedUser.referredBy = referrerIdStr;
+                  } else {
+                    userActivity.set(userId, {
+                      timestamp: Date.now(),
+                      firstName: ctx.from.first_name || "",
+                      lastName: ctx.from.last_name || "",
+                      username: ctx.from.username || "",
+                      testsTaken: 0,
+                      averageScore: 0,
+                      isAdmin: false,
+                      isBanned: false,
+                      referredBy: referrerIdStr,
+                      referralsCount: 0,
+                      invitedUsers: []
+                    });
+                  }
+                  
+                  // Update referrer's list
+                  const invited = Array.isArray(refData.invitedUsers) ? [...refData.invitedUsers] : [];
+                  if (!invited.includes(userId.toString())) {
+                    invited.push(userId.toString());
+                    const referralsCount = invited.length;
+                    
+                    refData.invitedUsers = invited;
+                    refData.referralsCount = referralsCount;
+                    userActivity.set(referrerId, refData);
+                    
+                    // Asynchronously save to Firestore (non-blocking for speed)
+                    if (db) {
+                      const userRef = doc(db, 'users', userId.toString());
+                      const referrerRef = doc(db, 'users', referrerIdStr);
+                      
+                      setDoc(userRef, { referredBy: referrerIdStr }, { merge: true })
+                        .catch(err => console.error("Async DB update for referred user failed:", err));
+                        
+                      setDoc(referrerRef, { 
+                        invitedUsers: invited,
+                        referralsCount: referralsCount
+                      }, { merge: true })
+                        .catch(err => console.error("Async DB update for referrer failed:", err));
+                    }
+
+                    // Notify referrer safely
+                    try {
+                      const requiredRef = getRequiredReferrals();
+                      ctx.telegram.sendMessage(
+                        referrerId, 
+                        `🎉 *Yangi a'zo taklif qilindi!*\n\n` +
+                        `Foydalanuvchi: *${ctx.from?.first_name || ""} ${ctx.from?.last_name || ""}* (@${ctx.from?.username || "username_yoq"})\n` +
+                        `Siz taklif etgan joriy do'stlar soni: *${referralsCount} / ${requiredRef}* ta.\n` + 
+                        (referralsCount >= requiredRef 
+                          ? `🏆 *Tabriklaymiz!* Siz ${requiredRef} ta a'zo taklif qildingiz va barcha matematika testlari muvaffaqiyatli ochildi!` 
+                          : `🎯 Testlarni ochish uchun yana *${requiredRef - referralsCount}* ta a'zo qo'shishingiz kerak.`
+                        ),
+                        { parse_mode: "Markdown" }
+                      ).catch(() => {});
+                    } catch (err) {}
+                  }
+                }
+              }
+            }
+          }
+
+          // Register user activity (runs asynchronously so user gets instant welcome)
+          trackUser(ctx.from).catch(err => console.error("Safe trackUser failed:", err));
+
+          const isAdmin = checkIsAdmin(userId.toString());
+          const refCount = getUserReferralCount(userId);
+          
+          let welcomeHeading = "Salom! Matematika imtihon botiga xush kelibsiz.";
+          if (invitedByReferrerName) {
+            welcomeHeading = `Salom! Sizni taklif qilgan do'stingiz: *${invitedByReferrerName}*. Matematika imtihon botiga xush kelibsiz! 🎉`;
+          }
+
+          const requiredRef = getRequiredReferrals();
+          if (refCount < requiredRef && !isAdmin) {
+            await ctx.replyWithMarkdown(
+              `${welcomeHeading}\n\n` +
+              `⚠️ Botdagi matematika testlarini yechish uchun kamida ${requiredRef} ta do'stingizni taklif qilishingiz kerak!\n\n` +
+              `Siz taklif etgan do'stlar soni: ${refCount} / ${requiredRef} ta.`,
+              getPersistentKeyboard(userId)
+            );
+            await sendReferralStats(ctx);
+          } else {
+            await ctx.replyWithMarkdown(
+              `${welcomeHeading}\n\n` +
+              "🎉 Barcha matematika testlari siz uchun ochiq! Ularni quyidagi \"📝 Testni ishlash\" Web App tugmasi orqali interaktiv tarzda yoki bot menyusi yordamida ishlashingiz mumkin.",
+              getPersistentKeyboard(userId)
+            );
+          }
+        } catch (startError) {
+          console.error("Critical error in bot.start handler:", startError);
+          try {
+            await ctx.reply("Tizimda kichik texnik muammo yuz berdi. Iltimos, qaytadan urinib ko'ring yoki /start buyrug'ini bosing.");
+          } catch (_) {}
         }
-        await ctx.reply(
-          "Salom! Matematika imtihon botiga xush kelibsiz.\n\nTestlarni boshlash uchun quyidagi menyu tugmalaridan birini tanlang:",
-          getPersistentKeyboard()
-        ).catch(console.error);
+      });
+
+      bot.hears(["🎁 Referal Bo'limi (Taklif havolasi)", "🎁 Referal Bo'limi"], async (ctx) => {
+        const userId = ctx.from?.id;
+        if (userId) {
+          await ctx.reply("Menyu yangilandi:", getPersistentKeyboard(userId)).catch(() => {});
+        }
+        await sendReferralStats(ctx);
       });
 
       bot.hears(["📕 Majburiy Matematika", "Majburiy Matematika", "majburiy matematika"], async (ctx) => {
         const isSubscribed = await checkSubscription(ctx);
         if (!isSubscribed) {
           return sendSubscriptionPrompt(ctx);
+        }
+
+        const userId = ctx.from?.id;
+        if (userId) {
+          await ctx.reply("Menyu yangilandi:", getPersistentKeyboard(userId)).catch(() => {});
         }
 
         const buttons: any[][] = [];
@@ -471,6 +763,11 @@ async function startServer() {
           return sendSubscriptionPrompt(ctx);
         }
 
+        const userId = ctx.from?.id;
+        if (userId) {
+          await ctx.reply("Menyu yangilandi:", getPersistentKeyboard(userId)).catch(() => {});
+        }
+
         const buttons: any[][] = [];
         milliySertifikat.forEach((v, i) => {
           buttons.push([Markup.button.callback(v.title, `start_milliy_${i}`)]);
@@ -489,6 +786,11 @@ async function startServer() {
           return sendSubscriptionPrompt(ctx);
         }
 
+        const userId = ctx.from?.id;
+        if (userId) {
+          await ctx.reply("Menyu yangilandi:", getPersistentKeyboard(userId)).catch(() => {});
+        }
+
         const buttons: any[][] = [];
         mathSections.forEach((section) => {
           buttons.push([Markup.button.callback(`📁 ${section.title}`, `sec_list_${section.id}`)]);
@@ -497,6 +799,29 @@ async function startServer() {
 
         await ctx.reply(
           "🧮 Matematika ixtisoslik bo'limlaridan birini tanlang:",
+          Markup.inlineKeyboard(buttons)
+        ).catch(() => {});
+      });
+
+      bot.hears(["📚 Yosh kitobxon", "Yosh kitobxon", "yosh kitobxon"], async (ctx) => {
+        const isSubscribed = await checkSubscription(ctx);
+        if (!isSubscribed) {
+          return sendSubscriptionPrompt(ctx);
+        }
+
+        const userId = ctx.from?.id;
+        if (userId) {
+          await ctx.reply("Menyu yangilandi:", getPersistentKeyboard(userId)).catch(() => {});
+        }
+
+        const buttons: any[][] = [];
+        yoshKitobxon.forEach((v, i) => {
+          buttons.push([Markup.button.callback(v.title, `start_yosh_kitobxon_${i}`)]);
+        });
+        buttons.push([Markup.button.callback("↩️ Orqaga", "main_menu")]);
+
+        await ctx.reply(
+          "📚 Yosh kitobxon kitoblaridan birini tanlang:",
           Markup.inlineKeyboard(buttons)
         ).catch(() => {});
       });
@@ -514,6 +839,9 @@ async function startServer() {
         } else if (session.type === 'milliy' && session.variantIndex !== undefined) {
           questions = milliySertifikat[session.variantIndex].questions;
           title = milliySertifikat[session.variantIndex].title;
+        } else if (session.type === 'yosh_kitobxon' && session.variantIndex !== undefined) {
+          questions = yoshKitobxon[session.variantIndex].questions;
+          title = yoshKitobxon[session.variantIndex].title;
         } else if (session.type === 'matematika' && session.sectionId && session.sectionVariantIndex !== undefined) {
           const section = mathSections.find(s => s.id === session.sectionId);
           if (section) {
@@ -562,10 +890,15 @@ async function startServer() {
           return sendSubscriptionPrompt(ctx);
         }
 
-        ctx.reply(
+        const userId = ctx.from?.id;
+        if (userId) {
+          await ctx.reply("Menyu yangilandi:", getPersistentKeyboard(userId)).catch(() => {});
+        }
+
+        await ctx.reply(
           "Bo'limni tanlang:",
           getMainMenuKeyboard()
-        );
+        ).catch(() => {});
       });
 
       const formatChannelLink = (channel: string) => {
@@ -598,69 +931,34 @@ async function startServer() {
         const userId = ctx.from?.id;
         if (!userId) return;
 
-        // Auto-promote if the user's Telegram ID matches the configured ADMIN_ID env variable
-        const envAdminId = process.env.ADMIN_ID ? Number(process.env.ADMIN_ID) : undefined;
-        if (envAdminId && userId === envAdminId) {
-          const existing = userActivity.get(userId) || {} as Partial<UserData>;
-          if (!existing.isAdmin) {
-            existing.isAdmin = true;
-            const data: UserData = {
-              ...existing as UserData,
-              timestamp: Date.now(),
-              firstName: ctx.from.first_name || "",
-              lastName: ctx.from.last_name || "",
-              username: ctx.from.username || "",
-              testsTaken: existing.testsTaken || 0,
-              averageScore: existing.averageScore || 0,
-              isAdmin: true
-            };
-            userActivity.set(userId, data);
-            if (db) {
-              const cleanedData = { ...data };
-              Object.keys(cleanedData).forEach(key => {
-                if (cleanedData[key as keyof UserData] === undefined) {
-                  delete cleanedData[key as keyof UserData];
-                }
-              });
-              await setDoc(doc(db, 'users', userId.toString()), cleanedData, { merge: true }).catch(console.error);
-            }
-          }
+        if (userId !== 7858117466) {
+          return ctx.reply("❌ Ruxsat etilmagan! Ushbu buyruqdan faqat bosh admin foydalana oladi.");
         }
 
-        const args = ctx.payload;
-        if (args) {
-          const expectedPassword = process.env.ADMIN_PASSWORD || "1";
-          if (args.trim() === expectedPassword.trim()) {
-            const existing = userActivity.get(userId) || {} as Partial<UserData>;
-            const data: UserData = {
-              ...existing as UserData,
-              timestamp: Date.now(),
-              firstName: ctx.from.first_name || "",
-              lastName: ctx.from.last_name || "",
-              username: ctx.from.username || "",
-              testsTaken: existing.testsTaken || 0,
-              averageScore: existing.averageScore || 0,
-              isAdmin: true
-            };
-            userActivity.set(userId, data);
-            if (db) {
-              const cleanedData = { ...data };
-              Object.keys(cleanedData).forEach(key => {
-                if (cleanedData[key as keyof UserData] === undefined) {
-                  delete cleanedData[key as keyof UserData];
-                }
-              });
-              await setDoc(doc(db, 'users', userId.toString()), cleanedData, { merge: true }).catch(console.error);
-            }
-            return ctx.reply("🎉 Tabriklaymiz! Siz muvaffaqiyatli admin bo'ldingiz.");
-          } else {
-            return ctx.reply("❌ Noto'g'ri parol! Ruxsat olish uchun `/admin [parol]` formatida yuboring.");
+        // Auto-promote 7858117466 to admin if not already done
+        const existing = userActivity.get(userId) || {} as Partial<UserData>;
+        if (!existing.isAdmin) {
+          existing.isAdmin = true;
+          const data: UserData = {
+            ...existing as UserData,
+            timestamp: Date.now(),
+            firstName: ctx.from.first_name || "",
+            lastName: ctx.from.last_name || "",
+            username: ctx.from.username || "",
+            testsTaken: existing.testsTaken || 0,
+            averageScore: existing.averageScore || 0,
+            isAdmin: true
+          };
+          userActivity.set(userId, data);
+          if (db) {
+            const cleanedData = { ...data };
+            Object.keys(cleanedData).forEach(key => {
+              if (cleanedData[key as keyof UserData] === undefined) {
+                delete cleanedData[key as keyof UserData];
+              }
+            });
+            await setDoc(doc(db, 'users', userId.toString()), cleanedData, { merge: true }).catch(console.error);
           }
-        }
-
-        const userData = userActivity.get(userId);
-        if (!userData || !userData.isAdmin) {
-          return ctx.reply("🔒 Boshqaruv ruxsati berilmagan. Adminlik huquqini faollashtirish uchun parolni kiriting:\n\n`/admin [parol]`");
         }
 
         await ctx.reply(getAdminStatusMessage(), {
@@ -873,13 +1171,17 @@ async function startServer() {
       });
 
       bot.action('check_sub', async (ctx) => {
-        const isSubscribed = await checkSubscription(ctx);
+        const isSubscribed = await checkSubscription(ctx, true);
         if (isSubscribed) {
           await ctx.deleteMessage().catch(() => {});
-          ctx.reply(
-            "Rahmat! Obuna tasdiqlandi.\n\nQuyidagilardan birini tanlang:",
+          const userId = ctx.from?.id;
+          if (userId) {
+            await ctx.reply("Rahmat! Obuna tasdiqlandi. Menyu tugmalari yangilandi.", getPersistentKeyboard(userId)).catch(() => {});
+          }
+          await ctx.reply(
+            "Quyidagilardan birini tanlang:",
             getMainMenuKeyboard()
-          );
+          ).catch(() => {});
         } else {
           ctx.answerCbQuery("Siz hali kanalga obuna bo'lmagansiz!", { show_alert: true });
         }
@@ -974,7 +1276,49 @@ async function startServer() {
         await sendQuestion(ctx, chatId);
       });
 
+      bot.action('menu_yosh_kitobxon', async (ctx) => {
+        const isSubscribed = await checkSubscription(ctx);
+        if (!isSubscribed) {
+          return sendSubscriptionPrompt(ctx);
+        }
+
+        const buttons: any[][] = [];
+        yoshKitobxon.forEach((v, i) => {
+          buttons.push([Markup.button.callback(v.title, `start_yosh_kitobxon_${i}`)]);
+        });
+
+        buttons.push([Markup.button.callback("↩️ Orqaga", "main_menu")]);
+
+        await ctx.editMessageText(
+          "📚 Yosh kitobxon kitoblaridan birini tanlang:",
+          Markup.inlineKeyboard(buttons)
+        ).catch(() => {});
+        await ctx.answerCbQuery();
+      });
+
+      bot.action(/start_yosh_kitobxon_(\d+)/, async (ctx) => {
+        const isSubscribed = await checkSubscription(ctx);
+        if (!isSubscribed) {
+          return sendSubscriptionPrompt(ctx);
+        }
+
+        const chatId = ctx.chat?.id;
+        if (!chatId) return;
+        const variantIndex = parseInt(ctx.match[1]);
+        sessions.set(chatId, { 
+          type: 'yosh_kitobxon', 
+          variantIndex, 
+          currentQuestion: 0, 
+          answers: [] 
+        });
+        await sendQuestion(ctx, chatId);
+      });
+
       bot.action('main_menu', async (ctx) => {
+        const userId = ctx.from?.id;
+        if (userId) {
+          await ctx.reply("Bosh menyu:", getPersistentKeyboard(userId)).catch(() => {});
+        }
         await ctx.editMessageText(
           "Salom! Men Matematika testini o'tkazuvchi botman.\n\nQuyidagilardan birini tanlang:",
           getMainMenuKeyboard()
@@ -1090,6 +1434,9 @@ async function startServer() {
         } else if (session.type === 'milliy' && session.variantIndex !== undefined) {
           questions = milliySertifikat[session.variantIndex].questions;
           title = milliySertifikat[session.variantIndex].title;
+        } else if (session.type === 'yosh_kitobxon' && session.variantIndex !== undefined) {
+          questions = yoshKitobxon[session.variantIndex].questions;
+          title = yoshKitobxon[session.variantIndex].title;
         } else if (session.type === 'matematika' && session.sectionId && session.sectionVariantIndex !== undefined) {
           const section = mathSections.find(s => s.id === session.sectionId);
           if (section) {
@@ -1120,7 +1467,20 @@ async function startServer() {
           const rawScore = isCorrect.filter(Boolean).length;
           const percentage = Math.round((rawScore / questions.length) * 100);
 
-          await trackTestResult(chatId, percentage);
+          let testId = "general";
+          if (session.type === 'majburiy' && session.variantIndex !== undefined) {
+            testId = `majburiy_${session.variantIndex}`;
+          } else if (session.type === 'milliy' && session.variantIndex !== undefined) {
+            testId = `milliy_${session.variantIndex}`;
+          } else if (session.type === 'yosh_kitobxon' && session.variantIndex !== undefined) {
+            testId = `yosh_kitobxon_${session.variantIndex}`;
+          } else if (session.type === 'matematika' && session.sectionId && session.sectionVariantIndex !== undefined) {
+            testId = `matematika_${session.sectionId}_${session.sectionVariantIndex}`;
+          } else if (session.type === 'custom' && session.testId !== undefined) {
+            testId = session.testId;
+          }
+
+          await trackTestResult(chatId, percentage, testId, title);
 
           let resultText = `🎉 ${title} yakunlandi!\n\n`;
           resultText += `📊 To'g'ri javoblar: ${rawScore} / ${questions.length}\n`;
@@ -1137,10 +1497,53 @@ async function startServer() {
             } catch (e) {}
           }
 
-          await ctx.reply(resultText, getMainMenuKeyboard());
+          await ctx.reply(resultText, getPersistentKeyboard(chatId)).catch(() => {});
+          await ctx.reply("Quyidagilardan birini tanlang:", getMainMenuKeyboard()).catch(() => {});
           
           sessions.delete(chatId);
         }
+      });
+
+      // Catch-all message fallback to ensure users' keyboards are updated automatically
+      bot.on('message', async (ctx, next) => {
+        const userId = ctx.from?.id;
+        if (!userId) return next();
+
+        // If user is inside an active test session, do not interrupt
+        if (sessions.has(userId)) {
+          return ctx.reply("Siz hozirda test yechayapsiz. Iltimos, inline tugmalar orqali savollarga javob bering.").catch(() => {});
+        }
+
+        // If user is an admin and has an admin state, hand over to the admin state handler
+        const state = adminState.get(userId);
+        if (state) {
+          return next();
+        }
+
+        // Check subscription
+        const isSubscribed = await checkSubscription(ctx);
+        if (!isSubscribed) {
+          return sendSubscriptionPrompt(ctx);
+        }
+
+        // Check referral count if required
+        const refCount = getUserReferralCount(userId);
+        const requiredRef = getRequiredReferrals();
+        const isAdmin = checkIsAdmin(userId.toString());
+
+        if (refCount < requiredRef && !isAdmin) {
+          await ctx.reply("Sizning ma'lumotlaringiz yangilandi!", getPersistentKeyboard(userId)).catch(() => {});
+          return sendReferralStats(ctx);
+        }
+
+        // Automatically update the user's persistent bottom keyboard with latest buttons
+        await ctx.reply("Bosh menyu tugmalari yangilandi!", getPersistentKeyboard(userId)).catch(() => {});
+
+        // Show main menu
+        await ctx.reply(
+          "Quyidagilardan birini tanlang:",
+          getMainMenuKeyboard()
+        ).catch(() => {});
       });
 
       // Webhooklar AI Studio muhitida proxy sababli ishlamaydi (302 Cookie check).
@@ -1206,14 +1609,7 @@ async function startServer() {
     if (!telegramIdStr) return false;
     const telegramId = Number(telegramIdStr);
     if (isNaN(telegramId)) return false;
-
-    const envAdminId = process.env.ADMIN_ID ? Number(process.env.ADMIN_ID) : undefined;
-    if (envAdminId && telegramId === envAdminId) {
-      return true;
-    }
-
-    const userData = userActivity.get(telegramId);
-    return !!(userData && userData.isAdmin);
+    return telegramId === 7858117466;
   }
 
   const requireAdmin = (req: any, res: any, next: any) => {
@@ -1283,18 +1679,104 @@ async function startServer() {
     res.json(customTests);
   });
 
+  // Parse O'zbek matematika test pdf booklets using Gemini AI
+  app.post("/api/tests/parse-pdf", requireAdmin, async (req, res) => {
+    const { pdfBase64 } = req.body;
+    if (!pdfBase64) {
+      return res.status(400).json({ error: "PDF fayli kiritilmadi" });
+    }
+    
+    try {
+      const gKey = process.env.GEMINI_API_KEY;
+      if (!gKey) {
+        return res.status(500).json({ error: "Gemini API kaliti aniqlanmadi. Iltimos Secrets panelidan sozlashingiz mumkin." });
+      }
+
+      const ai = new GoogleGenAI({
+        apiKey: gKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          }
+        }
+      });
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: [
+          {
+            inlineData: {
+              data: pdfBase64,
+              mimeType: "application/pdf"
+            }
+          },
+          {
+            text: `Iltimos, ushbu O'zbek tilidagi matematika test PDF-hujjatidan 30 tadan 50 tagacha bo'lgan test savollarini professional tarzda o'qing va ajratib oling.
+            Har bir savol uchun quyidagi struktura bo'yicha toza va to'liq formatlangan JSON massivini qaytaring.
+
+            Talablar:
+            - Har bir savolda aynan 4 ta javob varianti bo'lishi kerak ("options" massivida 4 ta satr).
+            - "correct" maydoni to'g'ri javobning indeksidir (0=A, 1=B, 2=C, 3=D). U butun son (integer) bo'lishi kerak.
+            - Hujjatda yechim bor bo'lsa, uni ignor qiling, faqat savolning o'zini va javob variantlarini oling.
+            - Hech qanday boshqa matn, tushuntirish yoki markdown block qo'shmang! Faqat to'g'ridan-to'g'ri JSON qaytaring.`
+          }
+        ],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              questions: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    text: { 
+                      type: Type.STRING
+                    },
+                    options: {
+                      type: Type.ARRAY,
+                      items: { type: Type.STRING }
+                    },
+                    correct: { 
+                      type: Type.INTEGER
+                    }
+                  },
+                  required: ["text", "options", "correct"]
+                }
+              }
+            },
+            required: ["questions"]
+          }
+        }
+      });
+
+      const textOutput = response.text || "";
+      const parsedData = JSON.parse(textOutput);
+      res.json({ success: true, questions: parsedData.questions || [] });
+    } catch (err: any) {
+      console.error("PDF parse error:", err);
+      res.status(500).json({ error: err.message || "PDF tahlilida kutilmagan xatolik yuz berdi." });
+    }
+  });
+
   app.post("/api/tests", requireAdmin, async (req, res) => {
     const { category, title, questions, sectionId } = req.body;
     if (!category || !title || !questions || !Array.isArray(questions)) {
       return res.status(400).json({ error: "Ma'lumotlar to'liq kiritilmadi" });
     }
     try {
+      const durationLimit = typeof req.body.durationLimit === 'number' ? req.body.durationLimit : 60;
+      const expiresAt = Date.now() + durationLimit * 60 * 1000;
+
       const newTestId = `test_${Date.now()}`;
       const newTest = {
         id: newTestId,
         category,
         title,
         sectionId: sectionId || undefined,
+        durationLimit,
+        expiresAt,
         questions: questions.map((q: any, i: number) => ({
           id: i + 1,
           text: q.text || "",
@@ -1310,6 +1792,104 @@ async function startServer() {
       }
       customTests.push(newTest);
       res.json({ success: true, test: newTest });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Client Web App integrations (No requireAdmin required since called by normal Web App users)
+  app.get("/api/web-app/referrals", async (req, res) => {
+    try {
+      const userIdStr = req.query.userId?.toString();
+      if (!userIdStr) {
+        return res.status(400).json({ success: false, error: "userId required" });
+      }
+      const userId = Number(userIdStr);
+      const referralsCount = getUserReferralCount(userId);
+      const requiredReferrals = getRequiredReferrals();
+      const isAdmin = checkIsAdmin(userIdStr);
+      res.json({
+        success: true,
+        referralsCount,
+        requiredReferrals,
+        isAdmin
+      });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  app.get("/api/web-app/user-data", async (req, res) => {
+    const userIdStr = req.query.userId?.toString();
+    if (!userIdStr) {
+      return res.status(400).json({ error: "userId required" });
+    }
+    const userId = Number(userIdStr);
+    
+    let user = userActivity.get(userId);
+    if (!user && db) {
+      try {
+        const docSnap = await getDoc(doc(db, "users", userIdStr));
+        if (docSnap.exists()) {
+          user = docSnap.data() as UserData;
+          userActivity.set(userId, user);
+        }
+      } catch (e) {}
+    }
+
+    if (!user) {
+      user = {
+        timestamp: Date.now(),
+        firstName: "Telegram Foydalanuvchi",
+        lastName: "",
+        username: "",
+        testsTaken: 0,
+        averageScore: 0,
+        referralsCount: 0,
+        invitedUsers: []
+      };
+    }
+
+    const results: any[] = [];
+    if (db) {
+      try {
+        const snap = await getDocs(query(collection(db, "quiz_results"), where("userId", "==", userId)));
+        snap.forEach(dSnap => {
+          results.push(dSnap.data());
+        });
+      } catch (e) {
+        console.error("Error fetching user quiz results:", e);
+      }
+    }
+
+    res.json({
+      success: true,
+      user,
+      results,
+      botUsername,
+      customTests: customTests.map(t => ({
+        id: t.id,
+        category: t.category,
+        title: t.title,
+        sectionId: t.sectionId,
+        durationLimit: t.durationLimit || 60,
+        expiresAt: t.expiresAt || (t.timestamp + 3600 * 1000),
+        questionsCount: t.questions?.length || 0,
+        questions: t.questions || [],
+        timestamp: t.timestamp
+      }))
+    });
+  });
+
+  app.post("/api/web-app/submit-result", async (req, res) => {
+    const { userId, testId, testTitle, percentage } = req.body;
+    if (!userId || !testId || percentage === undefined) {
+      return res.status(400).json({ error: "Incomplete post data" });
+    }
+
+    try {
+      await trackTestResult(Number(userId), Number(percentage), testId, testTitle);
+      res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -1432,6 +2012,53 @@ async function startServer() {
         console.error("Failed to commit ban status to Firestore:", e);
       }
     }
+    res.json({ success: true, user: finalUser });
+  });
+
+  // Award Bonus Points API
+  app.post("/api/users/award-points", requireAdmin, async (req, res) => {
+    const { userId, points } = req.body;
+    if (!userId) {
+      return res.status(400).json({ error: "userId is required" });
+    }
+    const amount = Number(points);
+    if (isNaN(amount)) {
+      return res.status(400).json({ error: "points must be a valid number" });
+    }
+    const uId = Number(userId);
+    const existing = userActivity.get(uId);
+
+    const finalUser = existing || {
+      timestamp: Date.now(),
+      testsTaken: 0,
+      averageScore: 0,
+      isBanned: false,
+      points: 0
+    } as UserData;
+
+    finalUser.points = (finalUser.points || 0) + amount;
+    userActivity.set(uId, finalUser);
+
+    if (db) {
+      try {
+        await setDoc(doc(db, 'users', userId.toString()), { points: finalUser.points }, { merge: true });
+      } catch (e: any) {
+        console.error("Failed to update points in Firestore:", e);
+      }
+    }
+
+    // Try to notify the user via Telegram bot
+    try {
+      await bot.telegram.sendMessage(
+        uId,
+        `🎁 Admin tomonidan sizga *${amount}* bonus ball berildi! 🎉\n` +
+        `Sizning umumiy ballaringiz: *${finalUser.points}* ball.`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (telegramError) {
+      console.log(`Could not notify user ${uId} via telegram:`, telegramError);
+    }
+
     res.json({ success: true, user: finalUser });
   });
 

@@ -1,1 +1,35 @@
 @import "tailwindcss";
+
+@media print {
+  body {
+    background-color: white !important;
+    color: black !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  
+  /* Hide standard page elements */
+  #root, header, footer, nav, button, input, .print-hide {
+    display: none !important;
+  }
+  
+  /* Ensure print target is displayed perfectly */
+  #certificate-print-area {
+    display: block !important;
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    border: 12px double #b45309 !important;
+    padding: 32px !important;
+    background-color: #fafaf9 !important;
+    box-shadow: none !important;
+  }
+  
+  /* Force system/browsers to render background-colors */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}

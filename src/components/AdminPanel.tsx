@@ -25,6 +25,7 @@ import {
   Briefcase,
   Phone,
   GraduationCap,
+  Gift,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -37,6 +38,7 @@ interface UserProfile {
   testsTaken?: number;
   averageScore?: number;
   isBanned?: boolean;
+  points?: number;
 }
 
 interface Candidate {
@@ -57,7 +59,7 @@ interface ChannelSettings {
   omonLink?: string;
 }
 
-export default function AdminPanel() {
+export default function AdminPanel({ currentUserId, isAdmin }: { currentUserId?: number; isAdmin?: boolean }) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [inputTelegramId, setInputTelegramId] = useState("");
   const [authError, setAuthError] = useState("");
@@ -103,6 +105,11 @@ export default function AdminPanel() {
   const [sendingIndividual, setSendingIndividual] = useState(false);
   const [individualSuccess, setIndividualSuccess] = useState(false);
 
+  // Bonus points states
+  const [bonusUser, setBonusUser] = useState<UserProfile | null>(null);
+  const [bonusPoints, setBonusPoints] = useState<string>("50");
+  const [isSubmittingBonus, setIsSubmittingBonus] = useState(false);
+
   // Candidates HR states
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loadingCandidates, setLoadingCandidates] = useState(true);
@@ -126,6 +133,8 @@ export default function AdminPanel() {
   const [testQuestions, setTestQuestions] = useState<any[]>([
     { text: "", imageUrl: "", options: ["", "", "", ""], correct: 0 },
   ]);
+  const [testDurationLimit, setTestDurationLimit] = useState<number>(60);
+  const [isParsingPdf, setIsParsingPdf] = useState<boolean>(false);
 
   const adminFetch = async (url: string, options: RequestInit = {}) => {
     const savedId = localStorage.getItem("admin_telegram_id") || "";
@@ -234,13 +243,19 @@ export default function AdminPanel() {
   };
 
   useEffect(() => {
+    if (isAdmin && currentUserId === 7858117466) {
+      localStorage.setItem("admin_telegram_id", "7858117466");
+      setIsAuthenticated(true);
+      setAdminUser({ id: 7858117466, firstName: "Bosh Admin" });
+      return;
+    }
     const savedId = localStorage.getItem("admin_telegram_id");
     if (savedId) {
       verifyId(savedId);
     } else {
       setIsAuthenticated(false);
     }
-  }, []);
+  }, [isAdmin, currentUserId]);
 
   useEffect(() => {
     if (isAuthenticated === true) {
@@ -321,6 +336,46 @@ export default function AdminPanel() {
       alert("Aloqa xatosi.");
     } finally {
       setSendingIndividual(false);
+    }
+  };
+
+  const handleAwardBonusPoints = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bonusUser) return;
+    const pts = parseInt(bonusPoints);
+    if (isNaN(pts)) {
+      alert("Iltimos, to'g'ri son kiriting!");
+      return;
+    }
+    setIsSubmittingBonus(true);
+    try {
+      const res = await adminFetch("/api/users/award-points", {
+        method: "POST",
+        body: JSON.stringify({ userId: bonusUser.id, points: pts }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setUsers((prev) =>
+            prev.map((u) =>
+              u.id === bonusUser.id
+                ? { ...u, points: (u.points || 0) + pts }
+                : u
+            )
+          );
+          setBonusUser(null);
+          setBonusPoints("50");
+          alert(`Muvaffaqiyatli ravishda ${pts} bonus ball berildi!`);
+        } else {
+          alert(data.error || "Xatolik yuz berdi.");
+        }
+      } else {
+        alert("Server bilan bog'lanishda xatolik.");
+      }
+    } catch (err: any) {
+      alert("Xatolik: " + err.message);
+    } finally {
+      setIsSubmittingBonus(false);
     }
   };
 
@@ -805,6 +860,16 @@ export default function AdminPanel() {
                               {user.averageScore || 0}%
                             </span>
                           </span>
+                          <span className="text-[10px] text-slate-400 bg-slate-900 px-2 py-1 rounded flex items-center gap-1">
+                            🏆 <span className="font-bold text-amber-400">{user.points || 0} ball</span>
+                          </span>
+                          <button
+                            onClick={() => setBonusUser(user)}
+                            className="bg-amber-950 hover:bg-amber-900 text-amber-300 font-bold px-2 py-1 rounded text-[10px] transition flex items-center gap-1"
+                            title="Bonus ball berish"
+                          >
+                            🎁 +Bonus
+                          </button>
                           <button
                             onClick={() => setSelectedUser(user)}
                             className="bg-indigo-950 hover:bg-indigo-900 text-indigo-300 font-bold px-2 py-1 rounded text-[10px] transition"
@@ -1230,6 +1295,7 @@ export default function AdminPanel() {
                               ? testSectionId
                               : undefined,
                           questions: testQuestions,
+                          durationLimit: Number(testDurationLimit)
                         }),
                       });
                       if (r.ok) {
@@ -1245,6 +1311,7 @@ export default function AdminPanel() {
                             correct: 0,
                           },
                         ]);
+                        setTestDurationLimit(60);
                         setIsAddingTest(false);
                         fetchTests();
                       } else {
@@ -1256,7 +1323,68 @@ export default function AdminPanel() {
                   }}
                   className="space-y-4 overflow-y-auto max-h-[280px] pr-1 scrollbar-thin"
                 >
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                  {/* PDF Uploader Section */}
+                  <div className="bg-slate-900/60 border border-indigo-950/80 p-3.5 rounded-xl space-y-2 text-xs">
+                    <h4 className="font-bold text-indigo-400 flex items-center gap-1.5">
+                      <Layers size={14} /> PDF Imtihon Kitobchasini Yuklash (Gemini AI Parser)
+                    </h4>
+                    <p className="text-[10px] text-slate-400">
+                      30 dan 50 gacha bo'lgan matematika test savollarini o'z ichiga olgan PDF hujjat tushiring. Gemini AI savollarni tezda aniqlab, formaga to'ldirib beradi.
+                    </p>
+                    <input
+                      type="file"
+                      accept="application/pdf"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        
+                        if (file.size > 15 * 1024 * 1024) {
+                          alert("Fayl hajmi juda katta (maks: 15MB)!");
+                          return;
+                        }
+                        
+                        setIsParsingPdf(true);
+                        const reader = new FileReader();
+                        reader.onload = async () => {
+                          try {
+                            const base64Str = (reader.result as string).split(",")[1];
+                            const res = await adminFetch("/api/tests/parse-pdf", {
+                              method: "POST",
+                              body: JSON.stringify({ pdfBase64: base64Str }),
+                            });
+                            if (res.ok) {
+                              const data = await res.json();
+                              if (data.success && Array.isArray(data.questions) && data.questions.length > 0) {
+                                setTestQuestions(data.questions);
+                                alert(`🎉 Muaffaqiyatli tahlil qilindi! ${data.questions.length} ta savol yuklandi. Pastda savollarni ko'rib chiqishingiz va tahrirlashingiz mumkin.`);
+                              } else {
+                                alert("PDF-da test savollari topilmadi yoki tahlil xatosi.");
+                              }
+                            } else {
+                              const extErr = await res.json().catch(() => ({}));
+                              alert(`Tahlil qilishda xatolik yuz berdi: ${extErr.error || "Server xatosi"}`);
+                            }
+                          } catch (err: any) {
+                            console.error(err);
+                            alert("Ulanish xatosi.");
+                          } finally {
+                            setIsParsingPdf(false);
+                          }
+                        };
+                        reader.readAsDataURL(file);
+                      }}
+                      disabled={isParsingPdf}
+                      className="w-full bg-slate-950 border border-slate-800 text-slate-300 rounded-lg p-2 text-xs focus:outline-none file:mr-2 file:py-1 file:px-2.5 file:rounded-md file:border-0 file:text-[10px] file:font-bold file:bg-indigo-600 file:text-white file:cursor-pointer disabled:opacity-40"
+                    />
+                    {isParsingPdf && (
+                      <div className="text-[10px] text-indigo-400 flex items-center gap-1.5 animate-pulse pt-1">
+                        <RefreshCw size={10} className="animate-spin" />
+                        <span>Gemini AI test savollarini tahlil qilmoqda. Iltimos kuting (bu 15-30 soniya vaqt olishi mumkin)...</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
                     <div className="space-y-1">
                       <label className="text-slate-400 font-bold block">
                         Sarlavha (masalan: 12-Variant)
@@ -1285,6 +1413,20 @@ export default function AdminPanel() {
                           🧮 Ixtisoslashtirilgan Matematika
                         </option>
                       </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-slate-400 font-bold block">
+                        Test vaqti (daqiqada, 1 soatgacha)
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={60}
+                        value={testDurationLimit}
+                        onChange={(e) => setTestDurationLimit(Number(e.target.value))}
+                        className="w-full bg-slate-900 border border-slate-800 focus:border-indigo-500 rounded-lg p-2 text-white outline-none"
+                        required
+                      />
                     </div>
                   </div>
 
@@ -1707,6 +1849,81 @@ export default function AdminPanel() {
                     </motion.div>
                   )}
                 </AnimatePresence>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Bonus Points Award Modal */}
+      <AnimatePresence>
+        {bonusUser && (
+          <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-slate-900 rounded-2xl border border-slate-800 w-full max-w-sm shadow-2xl overflow-hidden"
+            >
+              <div className="bg-slate-950 border-b border-slate-850 px-6 py-4 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
+                    <Gift size={16} className="text-amber-400 animate-bounce" />
+                    Bonus Ball Berish
+                  </h3>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    Foydalanuvchi: {bonusUser.firstName || "Noma'lum"} ({bonusUser.id})
+                  </p>
+                </div>
+                <button
+                  onClick={() => setBonusUser(null)}
+                  className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <form onSubmit={handleAwardBonusPoints} className="p-6 space-y-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                    Bonus ball miqdori (Son kiritilsin)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    placeholder="Masalan: 50"
+                    value={bonusPoints}
+                    onChange={(e) => setBonusPoints(e.target.value)}
+                    className="w-full border border-slate-800 rounded-xl p-2.5 text-xs bg-slate-950 text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    required
+                  />
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Ushbu ball foydalanuvchining umumiy ballariga qo'shiladi va u Telegram bot orqali xabardor qilinadi.
+                  </p>
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setBonusUser(null)}
+                    className="flex-1 bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold py-2 rounded-xl text-xs transition text-center"
+                  >
+                    Bekor qilish
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmittingBonus || !bonusPoints.trim()}
+                    className="flex-1 bg-amber-600 hover:bg-amber-700 text-slate-950 font-bold py-2 rounded-xl text-xs transition flex items-center justify-center gap-1.5 disabled:opacity-40"
+                  >
+                    {isSubmittingBonus ? (
+                      <RefreshCw className="animate-spin" size={13} />
+                    ) : (
+                      <>
+                        🎁 Ball Berish
+                      </>
+                    )}
+                  </button>
+                </div>
               </form>
             </motion.div>
           </div>
