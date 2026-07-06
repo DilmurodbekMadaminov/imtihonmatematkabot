@@ -515,9 +515,7 @@ async function startServer() {
             ["🎁 Referal Bo'limi"]
           ]).resize();
         } else {
-          const webAppUrl = `${process.env.APP_URL || "https://ais-dev-zwxesqr7uajqrp3m5f64nl-286796810075.asia-east1.run.app"}/?tg_user_id=${userId}`;
           return Markup.keyboard([
-            [Markup.button.webApp("📝 Testni ishlash", webAppUrl)],
             ["📕 Majburiy Matematika", "🎓 Milliy Sertifikat"],
             ["🧮 Matematika (Ixtisoslik)", "📚 Yosh kitobxon"],
             ["🎁 Referal Bo'limi"]
@@ -714,7 +712,7 @@ async function startServer() {
           } else {
             await ctx.replyWithMarkdown(
               `${welcomeHeading}\n\n` +
-              "🎉 Barcha matematika testlari siz uchun ochiq! Ularni quyidagi \"📝 Testni ishlash\" Web App tugmasi orqali interaktiv tarzda yoki bot menyusi yordamida ishlashingiz mumkin.",
+              "🎉 Barcha matematika testlari siz uchun ochiq! Ularni quyidagi bot menyusi tugmalari yordamida ishlashingiz mumkin.",
               getPersistentKeyboard(userId)
             );
           }
