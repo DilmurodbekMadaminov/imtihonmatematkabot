@@ -353,6 +353,37 @@ async function startServer() {
   if (botToken) {
     try {
       bot = new Telegraf(botToken);
+
+      // Real-time membership updates for ultra-fast, microsecond-level synchronization
+      bot.on('chat_member', async (ctx) => {
+        try {
+          const chatMember = ctx.chatMember;
+          if (!chatMember) return;
+          const userId = chatMember.from.id;
+          const status = chatMember.new_chat_member.status;
+          const isSubscribed = ['creator', 'administrator', 'member', 'restricted'].includes(status);
+          
+          console.log(`[Subscription Change] Real-time event: User ${userId} status on chat ${ctx.chat.id} changed to ${status}. Subscribed: ${isSubscribed}`);
+          subCache.set(userId, { isSubbed: isSubscribed, timestamp: Date.now() });
+        } catch (err) {
+          console.error("Error in real-time chat_member handler:", err);
+        }
+      });
+
+      bot.on('my_chat_member', async (ctx) => {
+        try {
+          const chatMember = ctx.myChatMember;
+          if (!chatMember) return;
+          const userId = chatMember.from.id;
+          const status = chatMember.new_chat_member.status;
+          const isSubscribed = ['creator', 'administrator', 'member', 'restricted'].includes(status);
+          
+          console.log(`[Bot Membership Change] Real-time event: Bot/User status changed to ${status}. Subscribed: ${isSubscribed}`);
+          subCache.set(userId, { isSubbed: isSubscribed, timestamp: Date.now() });
+        } catch (err) {
+          console.error("Error in real-time my_chat_member handler:", err);
+        }
+      });
       
       bot.telegram.getMe().then((me) => {
         if (me && me.username) {
@@ -395,10 +426,10 @@ async function startServer() {
             return true;
           }
 
-          // Use cache if not forcing fresh verification and cache is valid (3 minutes TTL)
+          // Use cache if not forcing fresh verification (Indefinite/ultra-high speed lookup, kept in-sync via real-time chat_member updates)
           if (!forceFresh) {
             const cached = subCache.get(userId);
-            if (cached && (Date.now() - cached.timestamp < 3 * 60 * 1000)) {
+            if (cached !== undefined) {
               return cached.isSubbed;
             }
           }
@@ -1553,8 +1584,11 @@ async function startServer() {
         while (!isRunning) {
           try {
             await bot!.telegram.deleteWebhook({ drop_pending_updates: true });
-            await bot!.launch({ dropPendingUpdates: true });
-            console.log("Telegram bot launched in Polling mode.");
+            await bot!.launch({
+              dropPendingUpdates: true,
+              allowedUpdates: ['message', 'callback_query', 'chat_member', 'my_chat_member']
+            });
+            console.log("Telegram bot launched in Polling mode with real-time membership listeners.");
             botStatus = "running";
             isRunning = true;
           } catch (error: any) {
